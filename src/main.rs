@@ -1,147 +1,87 @@
 #[macro_use]
 extern crate clap;
-extern crate failure;
 #[macro_use]
-extern crate failure_derive;
+extern crate getset;
+
+mod cmp;
+mod config;
+mod file_ext_exact;
+mod range_chunks;
 
 use clap::{App, Arg};
-use std::fs;
-use std::io::prelude::*;
-use std::os::unix::fs::FileTypeExt;
+use cmp::{Comparison, EntryInfo};
+use std::collections::HashSet;
 
-#[derive(Debug, Fail)]
-enum Error {
-    #[fail(display = "Types differ: {:?} != {:?}", _0, _1)]
-    TypesDiffer(std::fs::FileType, std::fs::FileType),
-
-    #[fail(display = "Sizes differ: {} != {}", _0, _1)]
-    SizesDiffer(u64, u64),
-
-    #[fail(display = "Contents differ at offset {}: {:?} != {:?}", _0, _1, _2)]
-    ContentsDiffer(usize, Vec<u8>, Vec<u8>),
-
-    #[fail(display = "Cannot compare, unknown type {:?}", _0)]
-    UnknownType(std::fs::FileType),
-}
-
-struct EntryInfo<'a> {
-    name: &'a str,
-    metadata: fs::Metadata,
-}
-
-impl<'a> EntryInfo<'a> {
-    fn new(name: &'a str) -> Result<EntryInfo, std::io::Error> {
-        Ok(EntryInfo {
-            name,
-            metadata: fs::metadata(name)?,
-        })
-    }
-
-    fn entry_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        let file_type = self.metadata.file_type();
-        {
-            let other_file_type = other.metadata.file_type();
-            if file_type != other_file_type {
-                Err(Error::TypesDiffer(file_type, other_file_type))?;
-            }
-        }
-        if file_type.is_dir() {
-            return self.dir_eq(&other);
-        } else if file_type.is_file() {
-            return self.file_eq(&other);
-        } else if file_type.is_symlink() {
-            return self.symlink_eq(&other);
-        } else if file_type.is_block_device() {
-            return self.block_device_eq(&other);
-        } else if file_type.is_char_device() {
-            return self.char_device_eq(&other);
-        } else if file_type.is_fifo() {
-            return self.fifo_eq(&other);
-        } else if file_type.is_socket() {
-            return self.socket_eq(&other);
-        } else {
-            Err(Error::UnknownType(file_type))?
-        }
-
-        Ok(())
-    }
-
-    fn dir_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-
-    fn file_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        if self.metadata.len() != other.metadata.len() {
-            Err(Error::SizesDiffer(
-                self.metadata.len(),
-                other.metadata.len(),
-            ))?
-        }
-
-        let mut file1 = fs::File::open(self.name)?;
-        let mut file2 = fs::File::open(other.name)?;
-        let mut data1 = vec![0u8; 2 * 1024 * 1024];
-        let mut data2 = vec![0u8; 2 * 1024 * 1024];
-        let mut remaining = self.metadata.len() as usize;
-        while remaining > 0 {
-            if remaining < data1.len() {
-                data1.resize(remaining, 0);
-                data2.resize(remaining, 0);
-            }
-            file1.read_exact(&mut data1)?;
-            file2.read_exact(&mut data2)?;
-
-            if data1 != data2 {
-                return Err(Error::ContentsDiffer(
-                    (self.metadata.len() as usize) - remaining,
-                    data1,
-                    data2,
-                ))?;
-            }
-
-            remaining -= data1.len();
-        }
-
-        Ok(())
-    }
-
-    fn symlink_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-
-    fn block_device_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-
-    fn char_device_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-
-    fn fifo_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-
-    fn socket_eq(&self, other: &Self) -> Result<(), failure::Error> {
-        Ok(())
-    }
-}
-
-fn run() -> Result<(), failure::Error> {
+fn run() -> Result<bool, std::io::Error> {
     let matches = App::new("fscmp")
         .version(crate_version!())
         .arg(Arg::with_name("first").required(true))
         .arg(Arg::with_name("second").required(true))
+        .arg(
+            Arg::with_name("content-size")
+                .long("content-size")
+                .takes_value(true)
+                .value_name("SIZE")
+                .help("Compare arguments using specified size (used for block devices)"),
+        )
+        .arg(
+            Arg::with_name("full-compare-limit")
+                .long("full-compare-limit")
+                .takes_value(true)
+                .value_name("SIZE")
+                .help("Size in bytes to limit full compare (larger files will be sampled)"),
+        )
+        .arg(
+            Arg::with_name("ignored-dirs")
+                .long("ignore-dir")
+                .takes_value(true)
+                .value_name("DIR")
+                .multiple(true)
+                .help("Directories to ignore when comparing"),
+        )
         .get_matches();
 
+    let content_size = if matches.is_present("content-size") {
+        Some(value_t!(matches, "content-size", u64).unwrap_or_else(|e| e.exit()))
+    } else {
+        None
+    };
+
+    let full_compare_limit = if matches.is_present("full-compare-limit") {
+        Some(value_t!(matches, "full-compare-limit", u64).unwrap_or_else(|e| e.exit()))
+    } else {
+        None
+    };
+
+    let ignored_dirs = matches
+        .values_of_os("ignored-dirs")
+        .map(|v| v.into_iter().map(|s| s.to_os_string()).collect())
+        .unwrap_or_else(HashSet::new);
+
+    config::set_config(full_compare_limit, ignored_dirs);
+
     let entries = (
-        EntryInfo::new(matches.value_of("first").unwrap())?,
-        EntryInfo::new(matches.value_of("second").unwrap())?,
+        EntryInfo::new(matches.value_of_os("first").unwrap())?,
+        EntryInfo::new(matches.value_of_os("second").unwrap())?,
     );
-    return entries.0.entry_eq(&entries.1);
+
+    let result = if let Some(content_size) = content_size {
+        entries.0.contents_eq(entries.1, content_size)?
+    } else {
+        entries.0.entry_eq(entries.1)?
+    };
+
+    match result {
+        Comparison::Equal => return Ok(true),
+        _ => eprintln!("{:?}", result),
+    }
+
+    Ok(false)
 }
 
 fn main() {
     match run() {
+        Ok(false) => std::process::exit(1),
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(1);
