@@ -55,14 +55,19 @@ fn run() -> Result<bool, std::io::Error> {
 
     let ignored_dirs = matches
         .values_of_os("ignored-dirs")
-        .map(|v| v.into_iter().map(|s| s.to_os_string()).collect())
+        .map(|v| v.into_iter().map(|s| s.into()).collect())
         .unwrap_or_else(HashSet::new);
 
-    config::set_config(full_compare_limit, ignored_dirs);
+    config::set_config(
+        matches.value_of_os("first").unwrap().into(),
+        matches.value_of_os("second").unwrap().into(),
+        full_compare_limit,
+        ignored_dirs,
+    );
 
     let entries = (
-        EntryInfo::new(matches.value_of_os("first").unwrap())?,
-        EntryInfo::new(matches.value_of_os("second").unwrap())?,
+        EntryInfo::new(config::get_config().first().clone())?,
+        EntryInfo::new(config::get_config().second().clone())?,
     );
 
     let result = if let Some(content_size) = content_size {

@@ -3,12 +3,12 @@ use super::file_ext_exact::FileExtExact;
 use super::range_chunks::ChunkableRange;
 use std;
 use std::cmp::max;
+use std::collections::hash_map;
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub enum Diff {
@@ -16,6 +16,7 @@ pub enum Diff {
     Nlinks(u64, u64),
     Uids(u32, u32),
     Gids(u32, u32),
+    Inodes(Option<PathBuf>, Option<PathBuf>),
     Sizes(u64, u64),
     Contents(u64, Vec<u8>, Vec<u8>),
     DeviceTypes(u64, u64),
@@ -28,8 +29,8 @@ pub enum Comparison {
     Equal,
     Unequal {
         diff: Diff,
-        first: OsString,
-        second: OsString,
+        first: PathBuf,
+        second: PathBuf,
     },
 }
 
@@ -44,15 +45,15 @@ impl Comparison {
 }
 
 pub struct EntryInfo {
-    path: OsString,
+    path: PathBuf,
     metadata: fs::Metadata,
 }
 
 fn dir_entry_to_map(
     entry: Result<fs::DirEntry, io::Error>,
-) -> Result<(OsString, fs::DirEntry), io::Error> {
+) -> Result<(PathBuf, fs::DirEntry), io::Error> {
     let entry = entry?;
-    Ok((entry.file_name(), entry))
+    Ok((entry.file_name().into(), entry))
 }
 
 macro_rules! compare_metadata_field {
@@ -67,24 +68,67 @@ macro_rules! compare_metadata_field {
     };
 }
 
+fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
+    match entry {
+        hash_map::Entry::Vacant(_) => None,
+        hash_map::Entry::Occupied(ref oe) => Some(oe.get()),
+    }
+}
+
 impl EntryInfo {
-    pub fn new(path: &OsStr) -> Result<EntryInfo, io::Error> {
-        Ok(EntryInfo {
-            path: OsString::from(path.to_os_string()),
-            metadata: fs::symlink_metadata(path)?,
-        })
+    pub fn new(path: PathBuf) -> Result<EntryInfo, io::Error> {
+        let metadata = path.symlink_metadata()?;
+        Ok(EntryInfo { path, metadata })
     }
 
-    fn child_entry(&self, name: &OsStr, metadata: fs::Metadata) -> EntryInfo {
-        let mut child_path = PathBuf::from(&self.path);
-        child_path.push(name);
+    fn child_entry(&self, name: &Path, metadata: fs::Metadata) -> EntryInfo {
         EntryInfo {
-            path: child_path.as_os_str().to_os_string(),
+            path: self.path.join(name),
             metadata,
         }
     }
 
     pub fn entry_eq(self, other: Self) -> Result<Comparison, io::Error> {
+        match *config::get_config().inode_maps().lock().unwrap() {
+            [ref mut first_map, ref mut second_map] => {
+                let entry = first_map.entry(self.metadata.ino());
+                let other_entry = second_map.entry(other.metadata.ino());
+
+                let is_new = {
+                    let value = entry_get(&entry);
+                    let other_value = entry_get(&other_entry);
+
+                    if value != other_value {
+                        return Ok(Comparison::unequal(
+                            Diff::Inodes(value.cloned(), other_value.cloned()),
+                            self,
+                            other,
+                        ));
+                    }
+
+                    value.is_none()
+                };
+
+                if is_new {
+                    entry.or_insert(
+                        self.path
+                            .strip_prefix(config::get_config().first())
+                            .unwrap()
+                            .into(),
+                    );
+                    other_entry.or_insert(
+                        other
+                            .path
+                            .strip_prefix(config::get_config().second())
+                            .unwrap()
+                            .into(),
+                    );
+                } else {
+                    return Ok(Comparison::Equal);
+                }
+            }
+        }
+
         compare_metadata_field!(self, other, file_type, Diff::Types);
         compare_metadata_field!(self, other, nlink, Diff::Nlinks);
         compare_metadata_field!(self, other, uid, Diff::Uids);
@@ -92,19 +136,19 @@ impl EntryInfo {
 
         let file_type = self.metadata.file_type();
         if file_type.is_dir() {
-            return self.dir_eq(other);
+            self.dir_eq(other)
         } else if file_type.is_file() {
-            return self.file_eq(other);
+            self.file_eq(other)
         } else if file_type.is_symlink() {
-            return self.symlink_eq(other);
+            self.symlink_eq(other)
         } else if file_type.is_block_device() {
-            return self.block_device_eq(other);
+            self.block_device_eq(other)
         } else if file_type.is_char_device() {
-            return self.char_device_eq(other);
+            self.char_device_eq(other)
         } else if file_type.is_fifo() {
-            return self.fifo_eq(other);
+            self.fifo_eq(other)
         } else if file_type.is_socket() {
-            return self.socket_eq(other);
+            self.socket_eq(other)
         } else {
             panic!("Cannot compare, unknown type {:?}", file_type);
         }
@@ -144,16 +188,9 @@ impl EntryInfo {
     }
 
     fn file_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        let metadata_len = self.metadata.len();
-        let other_metadata_len = other.metadata.len();
-        if metadata_len != other_metadata_len {
-            return Ok(Comparison::unequal(
-                Diff::Sizes(metadata_len, other_metadata_len),
-                self,
-                other,
-            ));
-        }
+        compare_metadata_field!(self, other, len, Diff::Sizes);
 
+        let metadata_len = self.metadata.len();
         return self.contents_eq(other, metadata_len);
     }
 
@@ -210,15 +247,7 @@ impl EntryInfo {
     }
 
     fn char_device_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        let rdev = self.metadata.rdev();
-        let other_rdev = other.metadata.rdev();
-        if rdev != other_rdev {
-            return Ok(Comparison::unequal(
-                Diff::DeviceTypes(rdev, other_rdev),
-                self,
-                other,
-            ));
-        }
+        compare_metadata_field!(self, other, rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
