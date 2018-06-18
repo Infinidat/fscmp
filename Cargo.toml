@@ -6,3 +6,4 @@ authors = ["Dror Levin <spatz@psybear.com>"]
 [dependencies]
 clap = "2.31.2"
 getset = "0.0.6"
+rayon = "1.0.1"

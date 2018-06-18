@@ -1,8 +1,8 @@
 use super::config;
 use super::file_ext_exact::FileExtExact;
-use super::range_chunks::ChunkableRange;
+use rayon::prelude::*;
 use std;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::HashMap;
 use std::fs;
@@ -10,7 +10,7 @@ use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Diff {
     Types(fs::FileType, fs::FileType),
     Nlinks(u64, u64),
@@ -24,7 +24,7 @@ pub enum Diff {
     DirContents,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Comparison {
     Equal,
     Unequal {
@@ -35,11 +35,11 @@ pub enum Comparison {
 }
 
 impl Comparison {
-    fn unequal(diff: Diff, first: EntryInfo, second: EntryInfo) -> Comparison {
+    fn unequal(diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
         Comparison::Unequal {
             diff,
-            first: first.path,
-            second: second.path,
+            first: first.path.clone(),
+            second: second.path.clone(),
         }
     }
 }
@@ -61,8 +61,8 @@ macro_rules! compare_metadata_field {
         if $first.metadata.$accessor() != $second.metadata.$accessor() {
             return Ok(Comparison::unequal(
                 $err_type($first.metadata.$accessor(), $second.metadata.$accessor()),
-                $first,
-                $second,
+                &$first,
+                &$second,
             ));
         }
     };
@@ -101,8 +101,8 @@ impl EntryInfo {
                     if value != other_value {
                         return Ok(Comparison::unequal(
                             Diff::Inodes(value.cloned(), other_value.cloned()),
-                            self,
-                            other,
+                            &self,
+                            &other,
                         ));
                     }
 
@@ -163,28 +163,23 @@ impl EntryInfo {
             .collect::<Result<_, _>>()?;
 
         if contents.len() != other_contents.len() {
-            return Ok(Comparison::unequal(Diff::DirContents, self, other));
+            return Ok(Comparison::unequal(Diff::DirContents, &self, &other));
         }
 
-        for (name, entry) in contents {
-            if config::get_config().ignored_dirs().contains(&name) {
-                continue;
-            }
-
-            if let Some(other_entry) = other_contents.get(&name) {
-                let first = self.child_entry(&name, entry.metadata()?);
-                let second = other.child_entry(&name, other_entry.metadata()?);
-                let result = first.entry_eq(second)?;
-                match result {
-                    Comparison::Unequal { .. } => return Ok(result),
-                    _ => (),
+        contents
+            .par_iter()
+            .filter(|(name, _)| !config::get_config().ignored_dirs().contains::<Path>(name))
+            .map(|(name, entry)| {
+                if let Some(other_entry) = other_contents.get::<Path>(name) {
+                    let first = self.child_entry(&name, entry.metadata()?);
+                    let second = other.child_entry(&name, other_entry.metadata()?);
+                    first.entry_eq(second)
+                } else {
+                    Ok(Comparison::unequal(Diff::DirContents, &self, &other))
                 }
-            } else {
-                return Ok(Comparison::unequal(Diff::DirContents, self, other));
-            }
-        }
-
-        Ok(Comparison::Equal)
+            })
+            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            .unwrap_or(Ok(Comparison::Equal))
     }
 
     fn file_eq(self, other: Self) -> Result<Comparison, io::Error> {
@@ -196,36 +191,42 @@ impl EntryInfo {
 
     pub fn contents_eq(self, other: Self, size: u64) -> Result<Comparison, io::Error> {
         const BUF_SIZE: usize = 2 * 1024 * 1024;
+        const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
         let file1 = fs::File::open(&self.path)?;
         let file2 = fs::File::open(&other.path)?;
 
-        for chunk in (0..size).chunks_leap(
-            BUF_SIZE as u64,
-            config::get_config()
-                .full_compare_limit()
-                .map(|limit| calc_leap(size, limit, BUF_SIZE as u64))
-                .unwrap_or(BUF_SIZE as u64),
-        ) {
-            let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
-            let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
+        let limit = config::get_config()
+            .full_compare_limit()
+            .map(|limit| min(limit, size))
+            .unwrap_or(size);
+        let leap = calc_leap(size, limit, BUF_SIZE_U64);
 
-            let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
-            let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
+        (0..calc_chunk_count(limit, BUF_SIZE_U64))
+            .into_par_iter()
+            .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
+            .map(|chunk| {
+                let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
+                let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
 
-            file1.read_at_exact(&mut chunked_data1, chunk.start)?;
-            file2.read_at_exact(&mut chunked_data2, chunk.start)?;
+                let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
+                let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
-            if chunked_data1 != chunked_data2 {
-                return Ok(Comparison::unequal(
-                    Diff::Contents(chunk.start, chunked_data1.to_vec(), chunked_data2.to_vec()),
-                    self,
-                    other,
-                ));
-            }
-        }
+                file1.read_at_exact(&mut chunked_data1, chunk.start)?;
+                file2.read_at_exact(&mut chunked_data2, chunk.start)?;
 
-        Ok(Comparison::Equal)
+                Ok(if chunked_data1 == chunked_data2 {
+                    Comparison::Equal
+                } else {
+                    Comparison::unequal(
+                        Diff::Contents(chunk.start, chunked_data1.to_vec(), chunked_data2.to_vec()),
+                        &self,
+                        &other,
+                    )
+                })
+            })
+            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            .unwrap_or(Ok(Comparison::Equal))
     }
 
     fn symlink_eq(self, other: Self) -> Result<Comparison, io::Error> {
@@ -234,8 +235,8 @@ impl EntryInfo {
         if self_target != other_target {
             return Ok(Comparison::unequal(
                 Diff::Links(self_target, other_target),
-                self,
-                other,
+                &self,
+                &other,
             ));
         }
 
@@ -261,8 +262,16 @@ impl EntryInfo {
     }
 }
 
+fn calc_chunk_count(limit: u64, chunk_size: u64) -> u64 {
+    max(limit / chunk_size, 1)
+}
+
 fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
-    max::<u64>(chunk_size, size / (limit / (chunk_size)))
+    if limit < chunk_size {
+        limit
+    } else {
+        max::<u64>(chunk_size, size / (limit / chunk_size))
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +284,13 @@ mod test {
         assert_eq!(calc_leap(50, 50, 2), 2);
         assert_eq!(calc_leap(150, 30, 2), 10);
         assert_eq!(calc_leap(25, 50, 2), 2);
+        assert_eq!(calc_leap(25, 1, 2), 1);
+    }
+
+    #[test]
+    fn test_calc_chunk_count() {
+        assert_eq!(calc_chunk_count(1, 2), 1);
+        assert_eq!(calc_chunk_count(50, 2), 25);
+        assert_eq!(calc_chunk_count(20, 2), 10);
     }
 }

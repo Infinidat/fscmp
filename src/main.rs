@@ -2,11 +2,11 @@
 extern crate clap;
 #[macro_use]
 extern crate getset;
+extern crate rayon;
 
 mod cmp;
 mod config;
 mod file_ext_exact;
-mod range_chunks;
 
 use clap::{App, Arg};
 use cmp::{Comparison, EntryInfo};
@@ -69,6 +69,11 @@ fn run() -> Result<bool, std::io::Error> {
         EntryInfo::new(config::get_config().first().clone())?,
         EntryInfo::new(config::get_config().second().clone())?,
     );
+
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(8 * 1024 * 1024)
+        .build_global()
+        .unwrap();
 
     let result = if let Some(content_size) = content_size {
         entries.0.contents_eq(entries.1, content_size)?
