@@ -1,3 +1,6 @@
+mod diff;
+
+use self::diff::Diff;
 use super::config;
 use super::file_ext_exact::FileExtExact;
 use rayon::prelude::*;
@@ -5,41 +8,58 @@ use std;
 use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Diff {
-    Types(fs::FileType, fs::FileType),
-    Nlinks(u64, u64),
-    Uids(u32, u32),
-    Gids(u32, u32),
-    Inodes(Option<PathBuf>, Option<PathBuf>),
-    Sizes(u64, u64),
-    Contents(u64, Vec<u8>, Vec<u8>),
-    DeviceTypes(u64, u64),
-    Links(PathBuf, PathBuf),
-    DirContents,
+const BLOCK_SIZE: usize = 512;
+
+trait SliceRange {
+    fn subslice(&self, start: usize, size: usize) -> &Self;
+}
+
+impl<T> SliceRange for [T] {
+    fn subslice(&self, start: usize, size: usize) -> &Self {
+        let end = min(start + size, self.len());
+        return &self[start..end];
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Comparison {
     Equal,
-    Unequal {
-        diff: Diff,
-        first: PathBuf,
-        second: PathBuf,
-    },
+    Unequal { diff: Diff, path: PathBuf },
 }
 
 impl Comparison {
     fn unequal(diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
-        Comparison::Unequal {
-            diff,
-            first: first.path.clone(),
-            second: second.path.clone(),
+        let path = first
+            .path
+            .strip_prefix(config::get_config().first())
+            .unwrap()
+            .into();
+
+        assert_eq!(
+            path,
+            second
+                .path
+                .strip_prefix(config::get_config().second())
+                .unwrap()
+        );
+
+        Comparison::Unequal { diff, path }
+    }
+}
+
+impl fmt::Display for Comparison {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Comparison::Equal => Ok(()),
+            Comparison::Unequal { diff, path } => {
+                write!(f, "Mismatch in \"/{}\": {}", path.to_string_lossy(), diff)
+            }
         }
     }
 }
@@ -129,7 +149,7 @@ impl EntryInfo {
             }
         }
 
-        compare_metadata_field!(self, other, file_type, Diff::Types);
+        compare_metadata_field!(self, other, mode, Diff::Modes);
         compare_metadata_field!(self, other, nlink, Diff::Nlinks);
         compare_metadata_field!(self, other, uid, Diff::Uids);
         compare_metadata_field!(self, other, gid, Diff::Gids);
@@ -163,7 +183,14 @@ impl EntryInfo {
             .collect::<Result<_, _>>()?;
 
         if contents.len() != other_contents.len() {
-            return Ok(Comparison::unequal(Diff::DirContents, &self, &other));
+            return Ok(Comparison::unequal(
+                Diff::DirContents(
+                    contents.keys().cloned().collect(),
+                    other_contents.keys().cloned().collect(),
+                ),
+                &self,
+                &other,
+            ));
         }
 
         contents
@@ -175,7 +202,14 @@ impl EntryInfo {
                     let second = other.child_entry(&name, other_entry.metadata()?);
                     first.entry_eq(second)
                 } else {
-                    Ok(Comparison::unequal(Diff::DirContents, &self, &other))
+                    Ok(Comparison::unequal(
+                        Diff::DirContents(
+                            contents.keys().cloned().collect(),
+                            other_contents.keys().cloned().collect(),
+                        ),
+                        &self,
+                        &other,
+                    ))
                 }
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
@@ -218,8 +252,15 @@ impl EntryInfo {
                 Ok(if chunked_data1 == chunked_data2 {
                     Comparison::Equal
                 } else {
+                    let local_lba =
+                        get_diff_index(chunked_data1, chunked_data2) / BLOCK_SIZE * BLOCK_SIZE;
+                    let lba = (chunk.start as usize) + local_lba;
                     Comparison::unequal(
-                        Diff::Contents(chunk.start, chunked_data1.to_vec(), chunked_data2.to_vec()),
+                        Diff::Contents(
+                            lba as u64,
+                            chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
+                            chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
+                        ),
                         &self,
                         &other,
                     )
@@ -260,6 +301,15 @@ impl EntryInfo {
     fn socket_eq(self, _other: Self) -> Result<Comparison, io::Error> {
         Ok(Comparison::Equal)
     }
+}
+
+fn get_diff_index(first: &[u8], second: &[u8]) -> usize {
+    for (i, (x, y)) in first.iter().zip(second.iter()).enumerate() {
+        if x != y {
+            return i;
+        }
+    }
+    panic!();
 }
 
 fn calc_chunk_count(limit: u64, chunk_size: u64) -> u64 {

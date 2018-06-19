@@ -83,7 +83,7 @@ fn run() -> Result<bool, std::io::Error> {
 
     match result {
         Comparison::Equal => return Ok(true),
-        _ => eprintln!("{:?}", result),
+        _ => eprintln!("{}", result),
     }
 
     Ok(false)
