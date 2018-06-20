@@ -49,7 +49,9 @@ impl Comparison {
                 .unwrap()
         );
 
-        Comparison::Unequal { diff, path }
+        let comp = Comparison::Unequal { diff, path };
+        debug!("{}", comp);
+        comp
     }
 }
 
@@ -109,6 +111,8 @@ impl EntryInfo {
     }
 
     pub fn entry_eq(self, other: Self) -> Result<Comparison, io::Error> {
+        debug!("Comparing {:?} and {:?}", self.path, other.path);
+
         match *config::get_config().inode_maps().lock().unwrap() {
             [ref mut first_map, ref mut second_map] => {
                 let entry = first_map.entry(self.metadata.ino());
@@ -227,6 +231,11 @@ impl EntryInfo {
         const BUF_SIZE: usize = 2 * 1024 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
+        debug!(
+            "Comparing contents of {:?} and {:?} of size {}",
+            self.path, other.path, size
+        );
+
         let file1 = fs::File::open(&self.path)?;
         let file2 = fs::File::open(&other.path)?;
 
@@ -240,6 +249,11 @@ impl EntryInfo {
             .into_par_iter()
             .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
             .map(|chunk| {
+                debug!(
+                    "Comparing range [{}:{}) of {:?} and {:?}",
+                    chunk.start, chunk.end, self.path, other.path
+                );
+
                 let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
                 let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
 
@@ -267,7 +281,10 @@ impl EntryInfo {
                 })
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
-            .unwrap_or(Ok(Comparison::Equal))
+            .unwrap_or({
+                debug!("Compare of {:?} and {:?} finished", self.path, other.path);
+                Ok(Comparison::Equal)
+            })
     }
 
     fn symlink_eq(self, other: Self) -> Result<Comparison, io::Error> {

@@ -2,7 +2,10 @@
 extern crate clap;
 #[macro_use]
 extern crate getset;
+#[macro_use]
+extern crate log;
 extern crate rayon;
+extern crate simplelog;
 
 mod cmp;
 mod config;
@@ -11,12 +14,29 @@ mod file_ext_exact;
 use clap::{App, Arg};
 use cmp::{Comparison, EntryInfo};
 use std::collections::HashSet;
+use std::fs::File;
+use std::path::Path;
+use std::process;
 
-fn run() -> Result<bool, std::io::Error> {
+fn run() -> Result<Comparison, std::io::Error> {
     let matches = App::new("fscmp")
         .version(crate_version!())
         .arg(Arg::with_name("first").required(true))
         .arg(Arg::with_name("second").required(true))
+        .arg(
+            Arg::with_name("log-dir")
+                .long("log-dir")
+                .takes_value(true)
+                .value_name("LOG_DIR")
+                .validator_os(|log_dir| {
+                    if Path::new(log_dir).is_dir() {
+                        Ok(())
+                    } else {
+                        Err("Log directory does not exist".into())
+                    }
+                })
+                .help("Directory to store log(s) in"),
+        )
         .arg(
             Arg::with_name("content-size")
                 .long("content-size")
@@ -40,6 +60,22 @@ fn run() -> Result<bool, std::io::Error> {
                 .help("Directories to ignore when comparing"),
         )
         .get_matches();
+
+    if let Some(log_dir) = matches.value_of_os("log-dir") {
+        let log_dir = Path::new(log_dir);
+        simplelog::WriteLogger::init(
+            simplelog::LevelFilter::max(),
+            simplelog::Config {
+                time_format: Some("%F %T%.3f"),
+                ..Default::default()
+            },
+            File::create(log_dir.join(format!(
+                "{}.{}.log",
+                env!("CARGO_PKG_NAME"),
+                process::id()
+            )))?,
+        ).unwrap();
+    }
 
     let content_size = if matches.is_present("content-size") {
         Some(value_t!(matches, "content-size", u64).unwrap_or_else(|e| e.exit()))
@@ -75,27 +111,24 @@ fn run() -> Result<bool, std::io::Error> {
         .build_global()
         .unwrap();
 
-    let result = if let Some(content_size) = content_size {
+    Ok(if let Some(content_size) = content_size {
         entries.0.contents_eq(entries.1, content_size)?
     } else {
         entries.0.entry_eq(entries.1)?
-    };
-
-    match result {
-        Comparison::Equal => return Ok(true),
-        _ => eprintln!("{}", result),
-    }
-
-    Ok(false)
+    })
 }
 
 fn main() {
     match run() {
-        Ok(false) => std::process::exit(1),
+        Ok(Comparison::Equal) => (),
+        Ok(comp) => {
+            eprintln!("{}", comp);
+            std::process::exit(1);
+        }
         Err(e) => {
+            debug!("Error: {}", e);
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
-        _ => (),
     }
 }
