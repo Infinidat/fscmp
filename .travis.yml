@@ -24,3 +24,7 @@ script:
   - cargo build --target $TARGET --release
   - cargo test --target $TARGET
   - cargo test --target $TARGET --release
+
+notifications:
+  email:
+    on_success: never
