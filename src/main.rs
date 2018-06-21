@@ -1,18 +1,15 @@
 #[macro_use]
 extern crate clap;
 #[macro_use]
-extern crate getset;
-#[macro_use]
 extern crate log;
 extern crate rayon;
 extern crate simplelog;
 
 mod cmp;
-mod config;
 mod file_ext_exact;
 
 use clap::{App, Arg};
-use cmp::{Comparison, EntryInfo};
+use cmp::{Comparison, FSCmp};
 use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
@@ -94,16 +91,11 @@ fn run() -> Result<Comparison, std::io::Error> {
         .map(|v| v.into_iter().map(|s| s.into()).collect())
         .unwrap_or_else(HashSet::new);
 
-    config::set_config(
+    let fscmp = FSCmp::new(
         matches.value_of_os("first").unwrap().into(),
         matches.value_of_os("second").unwrap().into(),
         full_compare_limit,
         ignored_dirs,
-    );
-
-    let entries = (
-        EntryInfo::new(config::get_config().first().clone())?,
-        EntryInfo::new(config::get_config().second().clone())?,
     );
 
     rayon::ThreadPoolBuilder::new()
@@ -112,9 +104,9 @@ fn run() -> Result<Comparison, std::io::Error> {
         .unwrap();
 
     Ok(if let Some(content_size) = content_size {
-        entries.0.contents_eq(entries.1, content_size)?
+        fscmp.contents(content_size)?
     } else {
-        entries.0.entry_eq(entries.1)?
+        fscmp.dirs()?
     })
 }
 

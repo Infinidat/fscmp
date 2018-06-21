@@ -1,18 +1,17 @@
-mod diff;
+mod comparison;
 
-use self::diff::Diff;
-use super::config;
+pub use self::comparison::{Comparison, Diff};
 use super::file_ext_exact::FileExtExact;
 use rayon::prelude::*;
 use std;
 use std::cmp::{max, min};
 use std::collections::hash_map;
-use std::collections::HashMap;
-use std::fmt;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 const BLOCK_SIZE: usize = 512;
 
@@ -27,74 +26,18 @@ impl<T> SliceRange for [T] {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Comparison {
-    Equal,
-    Unequal { diff: Diff, path: PathBuf },
-}
-
-impl Comparison {
-    fn unequal(diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
-        let path = first
-            .path
-            .strip_prefix(config::get_config().first())
-            .unwrap()
-            .into();
-
-        assert_eq!(
-            path,
-            second
-                .path
-                .strip_prefix(config::get_config().second())
-                .unwrap()
-        );
-
-        let comp = Comparison::Unequal { diff, path };
-        debug!("{}", comp);
-        comp
-    }
-}
-
-impl fmt::Display for Comparison {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Comparison::Equal => Ok(()),
-            Comparison::Unequal { diff, path } => {
-                write!(f, "Mismatch in \"/{}\": {}", path.to_string_lossy(), diff)
-            }
-        }
-    }
-}
-
-pub struct EntryInfo {
+struct EntryInfo {
     path: PathBuf,
     metadata: fs::Metadata,
 }
 
-fn dir_entry_to_map(
-    entry: Result<fs::DirEntry, io::Error>,
-) -> Result<(PathBuf, fs::DirEntry), io::Error> {
-    let entry = entry?;
-    Ok((entry.file_name().into(), entry))
-}
-
-macro_rules! compare_metadata_field {
-    ($first:ident, $second:ident, $accessor:ident, $err_type:path) => {
-        if $first.metadata.$accessor() != $second.metadata.$accessor() {
-            return Ok(Comparison::unequal(
-                $err_type($first.metadata.$accessor(), $second.metadata.$accessor()),
-                &$first,
-                &$second,
-            ));
-        }
-    };
-}
-
-fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
-    match entry {
-        hash_map::Entry::Vacant(_) => None,
-        hash_map::Entry::Occupied(ref oe) => Some(oe.get()),
-    }
+#[derive(Default)]
+pub struct FSCmp {
+    first: PathBuf,
+    second: PathBuf,
+    full_compare_limit: Option<u64>,
+    ignored_dirs: HashSet<PathBuf>,
+    inode_maps: Mutex<[HashMap<u64, PathBuf>; 2]>,
 }
 
 impl EntryInfo {
@@ -109,110 +52,158 @@ impl EntryInfo {
             metadata,
         }
     }
+}
 
-    pub fn entry_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        debug!("Comparing {:?} and {:?}", self.path, other.path);
+macro_rules! compare_metadata_field {
+    ($self:ident, $first:ident, $second:ident, $accessor:ident, $err_type:path) => {
+        if $first.metadata.$accessor() != $second.metadata.$accessor() {
+            return Ok($self.unequal(
+                $err_type($first.metadata.$accessor(), $second.metadata.$accessor()),
+                &$first,
+                &$second,
+            ));
+        }
+    };
+}
 
-        match *config::get_config().inode_maps().lock().unwrap() {
+impl FSCmp {
+    pub fn new(
+        first: PathBuf,
+        second: PathBuf,
+        full_compare_limit: Option<u64>,
+        ignored_dirs: HashSet<PathBuf>,
+    ) -> FSCmp {
+        FSCmp {
+            first,
+            second,
+            full_compare_limit,
+            ignored_dirs,
+            ..Default::default()
+        }
+    }
+
+    pub fn dirs(&self) -> Result<Comparison, io::Error> {
+        self.entry_eq(
+            EntryInfo::new(self.first.clone())?,
+            EntryInfo::new(self.second.clone())?,
+        )
+    }
+
+    pub fn contents(&self, size: u64) -> Result<Comparison, io::Error> {
+        self.contents_eq(
+            EntryInfo::new(self.first.clone())?,
+            EntryInfo::new(self.second.clone())?,
+            size,
+        )
+    }
+
+    fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
+        let path = first.path.strip_prefix(&self.first).unwrap().into();
+
+        assert_eq!(path, second.path.strip_prefix(&self.second).unwrap());
+
+        let comp = Comparison::Unequal {
+            diff,
+            first: self.first.clone(),
+            second: self.second.clone(),
+            path,
+        };
+        debug!("{}", comp);
+        comp
+    }
+
+    fn entry_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+        debug!("Comparing {:?} and {:?}", first.path, second.path);
+
+        match *self.inode_maps.lock().unwrap() {
             [ref mut first_map, ref mut second_map] => {
-                let entry = first_map.entry(self.metadata.ino());
-                let other_entry = second_map.entry(other.metadata.ino());
+                let first_entry = first_map.entry(first.metadata.ino());
+                let second_entry = second_map.entry(second.metadata.ino());
 
                 let is_new = {
-                    let value = entry_get(&entry);
-                    let other_value = entry_get(&other_entry);
+                    let first_value = entry_get(&first_entry);
+                    let second_value = entry_get(&second_entry);
 
-                    if value != other_value {
-                        return Ok(Comparison::unequal(
-                            Diff::Inodes(value.cloned(), other_value.cloned()),
-                            &self,
-                            &other,
+                    if first_value != second_value {
+                        return Ok(self.unequal(
+                            Diff::Inodes(first_value.cloned(), second_value.cloned()),
+                            &first,
+                            &second,
                         ));
                     }
 
-                    value.is_none()
+                    first_value.is_none()
                 };
 
                 if is_new {
-                    entry.or_insert(
-                        self.path
-                            .strip_prefix(config::get_config().first())
-                            .unwrap()
-                            .into(),
-                    );
-                    other_entry.or_insert(
-                        other
-                            .path
-                            .strip_prefix(config::get_config().second())
-                            .unwrap()
-                            .into(),
-                    );
+                    first_entry.or_insert(first.path.strip_prefix(&self.first).unwrap().into());
+                    second_entry.or_insert(second.path.strip_prefix(&self.second).unwrap().into());
                 } else {
                     return Ok(Comparison::Equal);
                 }
             }
         }
 
-        compare_metadata_field!(self, other, mode, Diff::Modes);
-        compare_metadata_field!(self, other, nlink, Diff::Nlinks);
-        compare_metadata_field!(self, other, uid, Diff::Uids);
-        compare_metadata_field!(self, other, gid, Diff::Gids);
+        compare_metadata_field!(self, first, second, mode, Diff::Modes);
+        compare_metadata_field!(self, first, second, nlink, Diff::Nlinks);
+        compare_metadata_field!(self, first, second, uid, Diff::Uids);
+        compare_metadata_field!(self, first, second, gid, Diff::Gids);
 
-        let file_type = self.metadata.file_type();
+        let file_type = first.metadata.file_type();
         if file_type.is_dir() {
-            self.dir_eq(other)
+            self.dir_eq(first, second)
         } else if file_type.is_file() {
-            self.file_eq(other)
+            self.file_eq(first, second)
         } else if file_type.is_symlink() {
-            self.symlink_eq(other)
+            self.symlink_eq(first, second)
         } else if file_type.is_block_device() {
-            self.block_device_eq(other)
+            self.block_device_eq(first, second)
         } else if file_type.is_char_device() {
-            self.char_device_eq(other)
+            self.char_device_eq(first, second)
         } else if file_type.is_fifo() {
-            self.fifo_eq(other)
+            self.fifo_eq(first, second)
         } else if file_type.is_socket() {
-            self.socket_eq(other)
+            self.socket_eq(first, second)
         } else {
             panic!("Cannot compare, unknown type {:?}", file_type);
         }
     }
 
-    fn dir_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        let contents: HashMap<_, _> = fs::read_dir(&self.path)?
+    fn dir_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+        let first_contents: HashMap<_, _> = fs::read_dir(&first.path)?
             .map(dir_entry_to_map)
             .collect::<Result<_, _>>()?;
-        let other_contents: HashMap<_, _> = fs::read_dir(&other.path)?
+        let second_contents: HashMap<_, _> = fs::read_dir(&second.path)?
             .map(dir_entry_to_map)
             .collect::<Result<_, _>>()?;
 
-        if contents.len() != other_contents.len() {
-            return Ok(Comparison::unequal(
+        if first_contents.len() != second_contents.len() {
+            return Ok(self.unequal(
                 Diff::DirContents(
-                    contents.keys().cloned().collect(),
-                    other_contents.keys().cloned().collect(),
+                    first_contents.keys().cloned().collect(),
+                    second_contents.keys().cloned().collect(),
                 ),
-                &self,
-                &other,
+                &first,
+                &second,
             ));
         }
 
-        contents
+        first_contents
             .par_iter()
-            .filter(|(name, _)| !config::get_config().ignored_dirs().contains::<Path>(name))
+            .filter(|(name, _)| !self.ignored_dirs.contains::<Path>(name))
             .map(|(name, entry)| {
-                if let Some(other_entry) = other_contents.get::<Path>(name) {
-                    let first = self.child_entry(&name, entry.metadata()?);
-                    let second = other.child_entry(&name, other_entry.metadata()?);
-                    first.entry_eq(second)
+                if let Some(second_entry) = second_contents.get::<Path>(name) {
+                    let first = first.child_entry(&name, entry.metadata()?);
+                    let second = second.child_entry(&name, second_entry.metadata()?);
+                    self.entry_eq(first, second)
                 } else {
-                    Ok(Comparison::unequal(
+                    Ok(self.unequal(
                         Diff::DirContents(
-                            contents.keys().cloned().collect(),
-                            other_contents.keys().cloned().collect(),
+                            first_contents.keys().cloned().collect(),
+                            second_contents.keys().cloned().collect(),
                         ),
-                        &self,
-                        &other,
+                        &first,
+                        &second,
                     ))
                 }
             })
@@ -220,27 +211,31 @@ impl EntryInfo {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
-    fn file_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        compare_metadata_field!(self, other, len, Diff::Sizes);
+    fn file_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+        compare_metadata_field!(self, first, second, len, Diff::Sizes);
 
-        let metadata_len = self.metadata.len();
-        return self.contents_eq(other, metadata_len);
+        let metadata_len = first.metadata.len();
+        return self.contents_eq(first, second, metadata_len);
     }
 
-    pub fn contents_eq(self, other: Self, size: u64) -> Result<Comparison, io::Error> {
+    fn contents_eq(
+        &self,
+        first: EntryInfo,
+        second: EntryInfo,
+        size: u64,
+    ) -> Result<Comparison, io::Error> {
         const BUF_SIZE: usize = 2 * 1024 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
         debug!(
             "Comparing contents of {:?} and {:?} of size {}",
-            self.path, other.path, size
+            first.path, second.path, size
         );
 
-        let file1 = fs::File::open(&self.path)?;
-        let file2 = fs::File::open(&other.path)?;
+        let file1 = fs::File::open(&first.path)?;
+        let file2 = fs::File::open(&second.path)?;
 
-        let limit = config::get_config()
-            .full_compare_limit()
+        let limit = self.full_compare_limit
             .map(|limit| min(limit, size))
             .unwrap_or(size);
         let leap = calc_leap(size, limit, BUF_SIZE_U64);
@@ -251,7 +246,7 @@ impl EntryInfo {
             .map(|chunk| {
                 debug!(
                     "Comparing range [{}:{}) of {:?} and {:?}",
-                    chunk.start, chunk.end, self.path, other.path
+                    chunk.start, chunk.end, first.path, second.path
                 );
 
                 let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
@@ -269,55 +264,69 @@ impl EntryInfo {
                     let local_lba =
                         get_diff_index(chunked_data1, chunked_data2) / BLOCK_SIZE * BLOCK_SIZE;
                     let lba = (chunk.start as usize) + local_lba;
-                    Comparison::unequal(
+                    self.unequal(
                         Diff::Contents(
                             lba as u64,
                             chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
                             chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
                         ),
-                        &self,
-                        &other,
+                        &first,
+                        &second,
                     )
                 })
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or({
-                debug!("Compare of {:?} and {:?} finished", self.path, other.path);
+                debug!("Compare of {:?} and {:?} finished", first.path, second.path);
                 Ok(Comparison::Equal)
             })
     }
 
-    fn symlink_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        let self_target = fs::read_link(&self.path)?;
-        let other_target = fs::read_link(&other.path)?;
-        if self_target != other_target {
-            return Ok(Comparison::unequal(
-                Diff::Links(self_target, other_target),
-                &self,
-                &other,
-            ));
+    fn symlink_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+        let first_target = fs::read_link(&first.path)?;
+        let second_target = fs::read_link(&second.path)?;
+        if first_target != second_target {
+            return Ok(self.unequal(Diff::Links(first_target, second_target), &first, &second));
         }
 
         Ok(Comparison::Equal)
     }
 
-    fn block_device_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        return self.char_device_eq(other);
+    fn block_device_eq(
+        &self,
+        first: EntryInfo,
+        second: EntryInfo,
+    ) -> Result<Comparison, io::Error> {
+        return self.char_device_eq(first, second);
     }
 
-    fn char_device_eq(self, other: Self) -> Result<Comparison, io::Error> {
-        compare_metadata_field!(self, other, rdev, Diff::DeviceTypes);
+    fn char_device_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+        compare_metadata_field!(self, first, second, rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
-    fn fifo_eq(self, _other: Self) -> Result<Comparison, io::Error> {
+    fn fifo_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, io::Error> {
         Ok(Comparison::Equal)
     }
 
-    fn socket_eq(self, _other: Self) -> Result<Comparison, io::Error> {
+    fn socket_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, io::Error> {
         Ok(Comparison::Equal)
     }
+}
+
+fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
+    match entry {
+        hash_map::Entry::Vacant(_) => None,
+        hash_map::Entry::Occupied(ref oe) => Some(oe.get()),
+    }
+}
+
+fn dir_entry_to_map(
+    entry: Result<fs::DirEntry, io::Error>,
+) -> Result<(PathBuf, fs::DirEntry), io::Error> {
+    let entry = entry?;
+    Ok((entry.file_name().into(), entry))
 }
 
 fn get_diff_index(first: &[u8], second: &[u8]) -> usize {
