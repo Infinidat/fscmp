@@ -2,8 +2,14 @@
 extern crate clap;
 #[macro_use]
 extern crate log;
+#[cfg(test)]
+extern crate libc;
 extern crate rayon;
 extern crate simplelog;
+#[cfg(test)]
+extern crate tempfile;
+#[cfg(test)]
+extern crate walkdir;
 
 mod cmp;
 mod file_ext_exact;
@@ -97,11 +103,6 @@ fn run() -> Result<Comparison, std::io::Error> {
         full_compare_limit,
         ignored_dirs,
     );
-
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(8 * 1024 * 1024)
-        .build_global()
-        .unwrap();
 
     Ok(if let Some(content_size) = content_size {
         fscmp.contents(content_size)?

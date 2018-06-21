@@ -23,7 +23,7 @@ pub enum Diff {
     Sizes(u64, u64),
     Contents(u64, Vec<u8>, Vec<u8>),
     DeviceTypes(u64, u64),
-    Links(PathBuf, PathBuf),
+    LinkTarget(PathBuf, PathBuf),
     DirContents(HashSet<PathBuf>, HashSet<PathBuf>),
 }
 
@@ -88,7 +88,7 @@ impl fmt::Display for Comparison {
                         "Device type\nFrom \"{}\": {}\nFrom \"{}\": {}",
                         first_path, first, second_path, second
                     ),
-                    Diff::Links(first, second) => write!(
+                    Diff::LinkTarget(first, second) => write!(
                         f,
                         "Link target\nFrom \"{}\": {:?}\nFrom \"{}\": {:?}",
                         first_path, first, second_path, second

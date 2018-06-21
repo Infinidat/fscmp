@@ -224,7 +224,7 @@ impl FSCmp {
         second: EntryInfo,
         size: u64,
     ) -> Result<Comparison, io::Error> {
-        const BUF_SIZE: usize = 2 * 1024 * 1024;
+        const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
         debug!(
@@ -286,7 +286,11 @@ impl FSCmp {
         let first_target = fs::read_link(&first.path)?;
         let second_target = fs::read_link(&second.path)?;
         if first_target != second_target {
-            return Ok(self.unequal(Diff::Links(first_target, second_target), &first, &second));
+            return Ok(self.unequal(
+                Diff::LinkTarget(first_target, second_target),
+                &first,
+                &second,
+            ));
         }
 
         Ok(Comparison::Equal)
@@ -353,6 +357,12 @@ fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
 #[cfg(test)]
 mod test {
     use super::*;
+    use libc;
+    use std::fs::{self, File};
+    use std::io::prelude::*;
+    use std::os::unix;
+    use tempfile;
+    use walkdir;
 
     #[test]
     fn test_calc_leap() {
@@ -368,5 +378,130 @@ mod test {
         assert_eq!(calc_chunk_count(1, 2), 1);
         assert_eq!(calc_chunk_count(50, 2), 25);
         assert_eq!(calc_chunk_count(20, 2), 10);
+    }
+
+    fn mknod(path: PathBuf, mode: libc::mode_t, dev: libc::dev_t) {
+        use std::ffi;
+        use std::os::unix::ffi::OsStringExt;
+
+        let res = unsafe {
+            libc::mknod(
+                ffi::CString::new(path.into_os_string().into_vec())
+                    .unwrap()
+                    .as_ptr(),
+                mode | 0o644,
+                dev,
+            )
+        };
+        assert_eq!(res, 0);
+    }
+
+    fn generate_tree() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for dir in &[dir.path(), &dir.path().join("directory")] {
+            fs::create_dir(dir.join("directory")).unwrap();
+            File::create(dir.join("regular_file")).unwrap();
+            unix::fs::symlink("symlink_target", dir.join("symlink")).unwrap();
+            if std::env::var("USER").unwrap() == "root" {
+                mknod(dir.join("block_device"), libc::S_IFBLK, 0);
+                mknod(dir.join("char_device"), libc::S_IFCHR, 0);
+            }
+            mknod(dir.join("fifo"), libc::S_IFIFO, 0);
+            mknod(dir.join("socket"), libc::S_IFSOCK, 0);
+        }
+        dir
+    }
+
+    #[test]
+    fn test_simple() {
+        let dir1 = generate_tree();
+        let fscmp = FSCmp::new(dir1.path().into(), dir1.path().into(), None, HashSet::new());
+        assert_eq!(fscmp.dirs().unwrap(), Comparison::Equal);
+
+        let dir2 = generate_tree();
+        let fscmp = FSCmp::new(dir1.path().into(), dir2.path().into(), None, HashSet::new());
+        assert_eq!(fscmp.dirs().unwrap(), Comparison::Equal);
+
+        File::create(dir2.path().join("new_regular_file")).unwrap();
+        let fscmp = FSCmp::new(dir1.path().into(), dir2.path().into(), None, HashSet::new());
+        if let Comparison::Unequal {
+            diff: Diff::DirContents(..),
+            ..
+        } = fscmp.dirs().unwrap()
+        {
+        } else {
+            panic!("New file not detected");
+        }
+        fs::remove_file(dir2.path().join("new_regular_file")).unwrap();
+    }
+
+    #[test]
+    fn test_permissions() {
+        let dir1 = generate_tree();
+        let dir2 = generate_tree();
+        for entry in walkdir::WalkDir::new(dir1.path())
+            .min_depth(1)
+            .into_iter()
+            .filter(|e| !e.as_ref().unwrap().path_is_symlink())
+        {
+            let entry = entry.unwrap();
+            let original_perms = fs::symlink_metadata(entry.path()).unwrap().permissions();
+            let mut new_perms = original_perms.clone();
+            new_perms.set_readonly(true);
+            fs::set_permissions(entry.path(), new_perms).unwrap();
+
+            let fscmp = FSCmp::new(dir1.path().into(), dir2.path().into(), None, HashSet::new());
+            if let Comparison::Unequal {
+                diff: Diff::Modes(..),
+                path,
+                ..
+            } = fscmp.dirs().unwrap()
+            {
+                assert!(entry.path().ends_with(path));
+            } else {
+                panic!("Comparison should be unequal");
+            }
+
+            fs::set_permissions(entry.path(), original_perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_contents() {
+        let dir1 = generate_tree();
+        let dir2 = generate_tree();
+
+        let file1_path = dir1.path().join("regular_file");
+        let file2_path = dir2.path().join("regular_file");
+
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        assert_eq!(fscmp.contents(0).unwrap(), Comparison::Equal);
+
+        let mut file1 = fs::OpenOptions::new()
+            .write(true)
+            .open(&file1_path)
+            .unwrap();
+        let mut file2 = fs::OpenOptions::new()
+            .write(true)
+            .open(&file2_path)
+            .unwrap();
+
+        file1.set_len(1024 * 1024).unwrap();
+        file2.set_len(1024 * 1024).unwrap();
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        assert_eq!(fscmp.contents(1024 * 1024).unwrap(), Comparison::Equal);
+
+        let offset = file1.seek(io::SeekFrom::Start(532 * 1024 + 13)).unwrap();
+        file1.write_all("a".as_bytes()).unwrap();
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        if let Comparison::Unequal {
+            diff: Diff::Contents(lba, ..),
+            ..
+        } = fscmp.contents(1024 * 1024).unwrap()
+        {
+            assert_eq!(lba, offset / 512 * 512);
+        } else {
+            panic!("Content should be unequal");
+        }
     }
 }
