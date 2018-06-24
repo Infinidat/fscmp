@@ -481,7 +481,7 @@ mod test {
             .write(true)
             .open(&file1_path)
             .unwrap();
-        let mut file2 = fs::OpenOptions::new()
+        let file2 = fs::OpenOptions::new()
             .write(true)
             .open(&file2_path)
             .unwrap();
