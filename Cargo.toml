@@ -1,6 +1,6 @@
 [package]
 name = "fscmp"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Dror Levin <spatz@psybear.com>"]
 description = "Utility for comparing files/directories"
 repository = "https://github.com/drrlvn/fscmp"

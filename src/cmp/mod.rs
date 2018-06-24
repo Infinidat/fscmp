@@ -261,9 +261,9 @@ impl FSCmp {
                 Ok(if chunked_data1 == chunked_data2 {
                     Comparison::Equal
                 } else {
-                    let local_lba =
-                        get_diff_index(chunked_data1, chunked_data2) / BLOCK_SIZE * BLOCK_SIZE;
-                    let lba = (chunk.start as usize) + local_lba;
+                    let diff_index = get_diff_index(chunked_data1, chunked_data2);
+                    let local_lba = diff_index / BLOCK_SIZE * BLOCK_SIZE;
+                    let lba = ((chunk.start as usize) + diff_index) / BLOCK_SIZE;
                     self.unequal(
                         Diff::Contents(
                             lba as u64,
@@ -499,7 +499,7 @@ mod test {
             ..
         } = fscmp.contents(1024 * 1024).unwrap()
         {
-            assert_eq!(lba, offset / 512 * 512);
+            assert_eq!(offset / 512, lba);
         } else {
             panic!("Content should be unequal");
         }
