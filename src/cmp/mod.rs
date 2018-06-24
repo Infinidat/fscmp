@@ -396,13 +396,17 @@ mod test {
         assert_eq!(res, 0);
     }
 
+    fn getuid() -> libc::uid_t {
+        unsafe { libc::getuid() }
+    }
+
     fn generate_tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for dir in &[dir.path(), &dir.path().join("directory")] {
             fs::create_dir(dir.join("directory")).unwrap();
             File::create(dir.join("regular_file")).unwrap();
             unix::fs::symlink("symlink_target", dir.join("symlink")).unwrap();
-            if std::env::var("USER").unwrap() == "root" {
+            if getuid() == 0 {
                 mknod(dir.join("block_device"), libc::S_IFBLK, 0);
                 mknod(dir.join("char_device"), libc::S_IFCHR, 0);
             }
