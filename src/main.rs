@@ -60,6 +60,7 @@ fn run() -> Result<Comparison, std::io::Error> {
                 .takes_value(true)
                 .value_name("DIR")
                 .multiple(true)
+                .number_of_values(1)
                 .help("Directories to ignore when comparing"),
         )
         .get_matches();
