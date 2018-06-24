@@ -2,6 +2,9 @@
 name = "fscmp"
 version = "0.1.0"
 authors = ["Dror Levin <spatz@psybear.com>"]
+description = "Utility for comparing files/directories"
+repository = "https://github.com/drrlvn/fscmp"
+license = "Apache-2.0"
 
 [dependencies]
 clap = "2.31.2"
