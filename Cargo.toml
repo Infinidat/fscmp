@@ -7,8 +7,8 @@ repository = "https://github.com/drrlvn/fscmp"
 license = "Apache-2.0"
 
 [dependencies]
-clap = "2.31.2"
-log = "0.4.2"
+clap = "2.32.0"
+log = "0.4.3"
 rayon = "1.0.1"
 simplelog = "0.5.2"
 
