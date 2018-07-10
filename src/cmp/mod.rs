@@ -22,7 +22,7 @@ trait SliceRange {
 impl<T> SliceRange for [T] {
     fn subslice(&self, start: usize, size: usize) -> &Self {
         let end = min(start + size, self.len());
-        return &self[start..end];
+        &self[start..end]
     }
 }
 
@@ -84,15 +84,15 @@ impl FSCmp {
 
     pub fn dirs(&self) -> Result<Comparison, failure::Error> {
         self.entry_eq(
-            EntryInfo::new(self.first.clone())?,
-            EntryInfo::new(self.second.clone())?,
+            &EntryInfo::new(self.first.clone())?,
+            &EntryInfo::new(self.second.clone())?,
         )
     }
 
     pub fn contents(&self, size: u64) -> Result<Comparison, failure::Error> {
         self.contents_eq(
-            EntryInfo::new(self.first.clone())?,
-            EntryInfo::new(self.second.clone())?,
+            &EntryInfo::new(self.first.clone())?,
+            &EntryInfo::new(self.second.clone())?,
             size,
         )
     }
@@ -112,8 +112,16 @@ impl FSCmp {
         comp
     }
 
-    fn entry_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
-        debug!("Comparing {:?} and {:?}", first.path, second.path);
+    fn entry_eq(
+        &self,
+        first: &EntryInfo,
+        second: &EntryInfo,
+    ) -> Result<Comparison, failure::Error> {
+        debug!(
+            "Comparing \"{}\" and \"{}\"",
+            first.path.display(),
+            second.path.display()
+        );
 
         match *self.inode_maps.lock().unwrap() {
             [ref mut first_map, ref mut second_map] => {
@@ -136,8 +144,10 @@ impl FSCmp {
                 };
 
                 if is_new {
-                    first_entry.or_insert(first.path.strip_prefix(&self.first).unwrap().into());
-                    second_entry.or_insert(second.path.strip_prefix(&self.second).unwrap().into());
+                    first_entry
+                        .or_insert_with(|| first.path.strip_prefix(&self.first).unwrap().into());
+                    second_entry
+                        .or_insert_with(|| second.path.strip_prefix(&self.second).unwrap().into());
                 } else {
                     return Ok(Comparison::Equal);
                 }
@@ -169,7 +179,7 @@ impl FSCmp {
         }
     }
 
-    fn dir_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
+    fn dir_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
         let first_contents: HashMap<_, _> = fs::read_dir(&first.path)?
             .map(dir_entry_to_map)
             .collect::<Result<_, _>>()?;
@@ -195,7 +205,7 @@ impl FSCmp {
                 if let Some(second_entry) = second_contents.get::<Path>(name) {
                     let first = first.child_entry(&name, entry.metadata()?);
                     let second = second.child_entry(&name, second_entry.metadata()?);
-                    self.entry_eq(first, second)
+                    self.entry_eq(&first, &second)
                 } else {
                     Ok(self.unequal(
                         Diff::DirContents(
@@ -211,25 +221,27 @@ impl FSCmp {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
-    fn file_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
+    fn file_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
         compare_metadata_field!(self, first, second, len, Diff::Sizes);
 
         let metadata_len = first.metadata.len();
-        return self.contents_eq(first, second, metadata_len);
+        self.contents_eq(first, second, metadata_len)
     }
 
     fn contents_eq(
         &self,
-        first: EntryInfo,
-        second: EntryInfo,
+        first: &EntryInfo,
+        second: &EntryInfo,
         size: u64,
     ) -> Result<Comparison, failure::Error> {
         const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
         debug!(
-            "Comparing contents of {:?} and {:?} of size {}",
-            first.path, second.path, size
+            "Comparing contents of \"{}\" and \"{}\" of size {}",
+            first.path.display(),
+            second.path.display(),
+            size
         );
 
         let file1 = fs::File::open(&first.path)?;
@@ -245,8 +257,11 @@ impl FSCmp {
             .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
             .map(|chunk| {
                 debug!(
-                    "Comparing range [{}:{}) of {:?} and {:?}",
-                    chunk.start, chunk.end, first.path, second.path
+                    "Comparing range [{}:{}) of \"{}\" and \"{}\"",
+                    chunk.start,
+                    chunk.end,
+                    first.path.display(),
+                    second.path.display()
                 );
 
                 let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
@@ -281,15 +296,19 @@ impl FSCmp {
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or({
-                debug!("Compare of {:?} and {:?} finished", first.path, second.path);
+                debug!(
+                    "Compare of \"{}\" and \"{}\" finished",
+                    first.path.display(),
+                    second.path.display()
+                );
                 Ok(Comparison::Equal)
             })
     }
 
     fn symlink_eq(
         &self,
-        first: EntryInfo,
-        second: EntryInfo,
+        first: &EntryInfo,
+        second: &EntryInfo,
     ) -> Result<Comparison, failure::Error> {
         let first_target = fs::read_link(&first.path)?;
         let second_target = fs::read_link(&second.path)?;
@@ -306,30 +325,34 @@ impl FSCmp {
 
     fn block_device_eq(
         &self,
-        first: EntryInfo,
-        second: EntryInfo,
+        first: &EntryInfo,
+        second: &EntryInfo,
     ) -> Result<Comparison, failure::Error> {
-        return self.char_device_eq(first, second);
+        self.char_device_eq(first, second)
     }
 
     fn char_device_eq(
         &self,
-        first: EntryInfo,
-        second: EntryInfo,
+        first: &EntryInfo,
+        second: &EntryInfo,
     ) -> Result<Comparison, failure::Error> {
         compare_metadata_field!(self, first, second, rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
-    fn fifo_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, failure::Error> {
+    fn fifo_eq(
+        &self,
+        _first: &EntryInfo,
+        _second: &EntryInfo,
+    ) -> Result<Comparison, failure::Error> {
         Ok(Comparison::Equal)
     }
 
     fn socket_eq(
         &self,
-        _first: EntryInfo,
-        _second: EntryInfo,
+        _first: &EntryInfo,
+        _second: &EntryInfo,
     ) -> Result<Comparison, failure::Error> {
         Ok(Comparison::Equal)
     }

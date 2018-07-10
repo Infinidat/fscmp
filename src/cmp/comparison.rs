@@ -90,8 +90,11 @@ impl fmt::Display for Comparison {
                     ),
                     Diff::LinkTarget(first, second) => write!(
                         f,
-                        "Link target\nFrom \"{}\": {:?}\nFrom \"{}\": {:?}",
-                        first_path, first, second_path, second
+                        "Link target\nFrom \"{}\": \"{}\"\nFrom \"{}\": \"{}\"",
+                        first_path,
+                        first.display(),
+                        second_path,
+                        second.display()
                     ),
                     Diff::DirContents(first, second) => write!(
                         f,
@@ -114,7 +117,7 @@ impl<'a> fmt::Display for BlockFormat<'a> {
             for b in chunk {
                 write!(f, "{:02x} ", b)?;
             }
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
 
         Ok(())
@@ -125,14 +128,11 @@ struct OptionFormat<'a, T>(&'a Option<T>)
 where
     T: 'a;
 
-impl<'a, T> fmt::Display for OptionFormat<'a, T>
-where
-    T: fmt::Debug,
-{
+impl<'a> fmt::Display for OptionFormat<'a, PathBuf> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
             None => write!(f, "-"),
-            Some(x) => write!(f, "{:?}", x),
+            Some(x) => write!(f, "\"{}\"", x.display()),
         }
     }
 }
