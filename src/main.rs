@@ -2,6 +2,7 @@
 extern crate clap;
 #[macro_use]
 extern crate log;
+extern crate failure;
 #[cfg(test)]
 extern crate libc;
 extern crate rayon;
@@ -21,7 +22,7 @@ use std::fs::File;
 use std::path::Path;
 use std::process;
 
-fn run() -> Result<Comparison, std::io::Error> {
+fn run() -> Result<Comparison, failure::Error> {
     let matches = App::new("fscmp")
         .version(crate_version!())
         .arg(Arg::with_name("first").required(true))
@@ -120,7 +121,7 @@ fn main() {
             std::process::exit(1);
         }
         Err(e) => {
-            debug!("Error: {}", e);
+            error!("Error: {}", e);
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }

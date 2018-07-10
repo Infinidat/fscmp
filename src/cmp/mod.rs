@@ -2,13 +2,13 @@ mod comparison;
 
 pub use self::comparison::{Comparison, Diff};
 use super::file_ext_exact::FileExtExact;
+use failure::{self, ResultExt};
 use rayon::prelude::*;
 use std;
 use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -41,7 +41,7 @@ pub struct FSCmp {
 }
 
 impl EntryInfo {
-    pub fn new(path: PathBuf) -> Result<EntryInfo, io::Error> {
+    pub fn new(path: PathBuf) -> Result<EntryInfo, failure::Error> {
         let metadata = path.symlink_metadata()?;
         Ok(EntryInfo { path, metadata })
     }
@@ -82,14 +82,14 @@ impl FSCmp {
         }
     }
 
-    pub fn dirs(&self) -> Result<Comparison, io::Error> {
+    pub fn dirs(&self) -> Result<Comparison, failure::Error> {
         self.entry_eq(
             EntryInfo::new(self.first.clone())?,
             EntryInfo::new(self.second.clone())?,
         )
     }
 
-    pub fn contents(&self, size: u64) -> Result<Comparison, io::Error> {
+    pub fn contents(&self, size: u64) -> Result<Comparison, failure::Error> {
         self.contents_eq(
             EntryInfo::new(self.first.clone())?,
             EntryInfo::new(self.second.clone())?,
@@ -112,7 +112,7 @@ impl FSCmp {
         comp
     }
 
-    fn entry_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn entry_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
         debug!("Comparing {:?} and {:?}", first.path, second.path);
 
         match *self.inode_maps.lock().unwrap() {
@@ -169,7 +169,7 @@ impl FSCmp {
         }
     }
 
-    fn dir_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn dir_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
         let first_contents: HashMap<_, _> = fs::read_dir(&first.path)?
             .map(dir_entry_to_map)
             .collect::<Result<_, _>>()?;
@@ -211,7 +211,7 @@ impl FSCmp {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
-    fn file_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn file_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, failure::Error> {
         compare_metadata_field!(self, first, second, len, Diff::Sizes);
 
         let metadata_len = first.metadata.len();
@@ -223,7 +223,7 @@ impl FSCmp {
         first: EntryInfo,
         second: EntryInfo,
         size: u64,
-    ) -> Result<Comparison, io::Error> {
+    ) -> Result<Comparison, failure::Error> {
         const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
@@ -255,8 +255,12 @@ impl FSCmp {
                 let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
-                file1.read_at_exact(&mut chunked_data1, chunk.start)?;
-                file2.read_at_exact(&mut chunked_data2, chunk.start)?;
+                file1
+                    .read_at_exact(&mut chunked_data1, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                file2
+                    .read_at_exact(&mut chunked_data2, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
 
                 Ok(if chunked_data1 == chunked_data2 {
                     Comparison::Equal
@@ -282,7 +286,11 @@ impl FSCmp {
             })
     }
 
-    fn symlink_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn symlink_eq(
+        &self,
+        first: EntryInfo,
+        second: EntryInfo,
+    ) -> Result<Comparison, failure::Error> {
         let first_target = fs::read_link(&first.path)?;
         let second_target = fs::read_link(&second.path)?;
         if first_target != second_target {
@@ -300,21 +308,29 @@ impl FSCmp {
         &self,
         first: EntryInfo,
         second: EntryInfo,
-    ) -> Result<Comparison, io::Error> {
+    ) -> Result<Comparison, failure::Error> {
         return self.char_device_eq(first, second);
     }
 
-    fn char_device_eq(&self, first: EntryInfo, second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn char_device_eq(
+        &self,
+        first: EntryInfo,
+        second: EntryInfo,
+    ) -> Result<Comparison, failure::Error> {
         compare_metadata_field!(self, first, second, rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
-    fn fifo_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn fifo_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, failure::Error> {
         Ok(Comparison::Equal)
     }
 
-    fn socket_eq(&self, _first: EntryInfo, _second: EntryInfo) -> Result<Comparison, io::Error> {
+    fn socket_eq(
+        &self,
+        _first: EntryInfo,
+        _second: EntryInfo,
+    ) -> Result<Comparison, failure::Error> {
         Ok(Comparison::Equal)
     }
 }
@@ -327,8 +343,8 @@ fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
 }
 
 fn dir_entry_to_map(
-    entry: Result<fs::DirEntry, io::Error>,
-) -> Result<(PathBuf, fs::DirEntry), io::Error> {
+    entry: Result<fs::DirEntry, std::io::Error>,
+) -> Result<(PathBuf, fs::DirEntry), failure::Error> {
     let entry = entry?;
     Ok((entry.file_name().into(), entry))
 }
@@ -359,6 +375,7 @@ mod test {
     use super::*;
     use libc;
     use std::fs::{self, File};
+    use std::io;
     use std::io::prelude::*;
     use std::os::unix;
     use tempfile;
