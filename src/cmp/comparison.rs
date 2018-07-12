@@ -76,7 +76,7 @@ impl fmt::Display for Comparison {
                     ),
                     Diff::Contents(lba, first, second) => write!(
                         f,
-                        "Block {}\nFrom \"{}\"\n{}\nFrom\"{}\"\n{}",
+                        "Block {}\nFrom \"{}\"\n{}\nFrom \"{}\"\n{}",
                         lba,
                         first_path,
                         BlockFormat(first),
