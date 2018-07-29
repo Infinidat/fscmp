@@ -237,6 +237,10 @@ impl FSCmp {
         const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
+        if size == 0 {
+            return Ok(Comparison::Equal);
+        }
+
         debug!(
             "Comparing contents of \"{}\" and \"{}\" of size {}",
             first.path.display(),
