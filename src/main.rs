@@ -71,6 +71,7 @@ fn run() -> Result<Comparison, failure::Error> {
         simplelog::WriteLogger::init(
             simplelog::LevelFilter::max(),
             simplelog::Config {
+                target: None,
                 time_format: Some("%F %T%.3f"),
                 ..Default::default()
             },
