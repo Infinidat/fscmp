@@ -9,11 +9,13 @@ license = "Apache-2.0"
 [dependencies]
 clap = "2.32.0"
 failure = "0.1.1"
+itertools = "0.7.8"
+libc = "0.2.42"
 log = "0.4.3"
+openat = "0.1.15"
 rayon = "1.0.1"
 simplelog = "0.5.2"
 
 [dev-dependencies]
-libc = "0.2.42"
 tempfile = "3.0.2"
 walkdir = "2.1.4"

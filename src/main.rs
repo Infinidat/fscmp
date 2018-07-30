@@ -3,8 +3,9 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate failure;
-#[cfg(test)]
+extern crate itertools;
 extern crate libc;
+extern crate openat;
 extern crate rayon;
 extern crate simplelog;
 #[cfg(test)]

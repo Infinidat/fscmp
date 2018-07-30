@@ -20,7 +20,7 @@ pub enum Diff {
     Uids(u32, u32),
     Gids(u32, u32),
     Inodes(Option<PathBuf>, Option<PathBuf>),
-    Sizes(u64, u64),
+    Sizes(i64, i64),
     Contents(u64, Vec<u8>, Vec<u8>),
     DeviceTypes(u64, u64),
     LinkTarget(PathBuf, PathBuf),
