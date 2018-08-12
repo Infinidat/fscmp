@@ -58,7 +58,7 @@ impl EntryInfo {
     }
 
     fn file(path: &Path) -> Result<EntryInfo, failure::Error> {
-        assert!(path.is_file());
+        assert!(!path.is_dir());
         let dir = Dir::open(path.parent().unwrap())?;
         let path = path.file_name().unwrap().to_os_string().into();
         let metadata = dir.metadata(&path)?;
