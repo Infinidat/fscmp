@@ -459,19 +459,15 @@ mod test {
         use std::ffi;
         use std::os::unix::ffi::OsStringExt;
 
-        let res = unsafe {
+        unsafe {
             libc::mknod(
                 ffi::CString::new(path.into_os_string().into_vec())?.as_ptr(),
                 mode | 0o644,
                 dev,
             )
         };
-        assert_eq!(res, 0);
-        Ok(())
-    }
 
-    fn getuid() -> libc::uid_t {
-        unsafe { libc::getuid() }
+        Ok(())
     }
 
     fn generate_tree() -> Result<tempfile::TempDir, failure::Error> {
@@ -480,10 +476,8 @@ mod test {
             fs::create_dir(dir.join("directory"))?;
             File::create(dir.join("regular_file"))?;
             unix::fs::symlink("symlink_target", dir.join("symlink"))?;
-            if getuid() == 0 {
-                mknod(dir.join("block_device"), libc::S_IFBLK, 0)?;
-                mknod(dir.join("char_device"), libc::S_IFCHR, 0)?;
-            }
+            mknod(dir.join("block_device"), libc::S_IFBLK, 0)?;
+            mknod(dir.join("char_device"), libc::S_IFCHR, 0)?;
             mknod(dir.join("fifo"), libc::S_IFIFO, 0)?;
             mknod(dir.join("socket"), libc::S_IFSOCK, 0)?;
         }
