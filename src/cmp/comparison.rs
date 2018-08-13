@@ -9,7 +9,7 @@ pub enum Comparison {
         diff: Diff,
         first: PathBuf,
         second: PathBuf,
-        path: PathBuf,
+        path: Option<PathBuf>,
     },
 }
 
@@ -39,7 +39,11 @@ impl fmt::Display for Comparison {
             } => {
                 let first_path = first_path.to_string_lossy();
                 let second_path = second_path.to_string_lossy();
-                write!(f, "Mismatch in \"/{}\": ", path.to_string_lossy())?;
+                write!(f, "Mismatch")?;
+                if let Some(path) = path {
+                    write!(f, " in \"{}\"", path.to_string_lossy())?;
+                }
+                write!(f, ": ")?;
                 match diff {
                     Diff::Modes(first, second) => write!(
                         f,

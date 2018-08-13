@@ -46,7 +46,8 @@ pub struct FSCmp {
 impl EntryInfo {
     fn dir(path: &Path) -> Result<EntryInfo, failure::Error> {
         assert!(path.is_dir());
-        let dir = Dir::open(path)?;
+        let path = path.canonicalize()?;
+        let dir = Dir::open(&path)?;
         let path = ".".to_string().into();
         let metadata = dir.metadata(&path)?;
         Ok(EntryInfo {
@@ -59,6 +60,7 @@ impl EntryInfo {
 
     fn file(path: &Path) -> Result<EntryInfo, failure::Error> {
         assert!(!path.is_dir());
+        let path = path.canonicalize()?;
         let dir = Dir::open(path.parent().unwrap())?;
         let path = path.file_name().unwrap().to_os_string().into();
         let metadata = dir.metadata(&path)?;
@@ -149,13 +151,15 @@ impl FSCmp {
     }
 
     fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
-        assert_eq!(first.path, second.path);
-
         let comp = Comparison::Unequal {
             diff,
             first: self.first.clone(),
             second: self.second.clone(),
-            path: first.parent_path.join(&first.path),
+            path: if first.path == second.path {
+                Some(first.parent_path.join(&first.path))
+            } else {
+                None
+            },
         };
         debug!("{}", comp);
         comp
@@ -526,7 +530,7 @@ mod test {
             let fscmp = FSCmp::new(dir1.path().into(), dir2.path().into(), None, HashSet::new());
             if let Comparison::Unequal {
                 diff: Diff::Modes(..),
-                path,
+                path: Some(path),
                 ..
             } = fscmp.dirs()?
             {
