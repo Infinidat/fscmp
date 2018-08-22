@@ -98,7 +98,7 @@ fn run() -> Result<Comparison, failure::Error> {
 
     let ignored_dirs = matches
         .values_of_os("ignored-dirs")
-        .map(|v| v.into_iter().map(|s| s.into()).collect())
+        .map(|v| v.map(|s| s.into()).collect())
         .unwrap_or_else(HashSet::new);
 
     let fscmp = FSCmp::new(
