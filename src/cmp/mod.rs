@@ -205,10 +205,12 @@ impl FSCmp {
             }
         }
 
-        compare_metadata_field!(self, first, second, st_mode, Diff::Modes);
+        if first.path != Path::new(".") {
+            compare_metadata_field!(self, first, second, st_mode, Diff::Modes);
+            compare_metadata_field!(self, first, second, st_uid, Diff::Uids);
+            compare_metadata_field!(self, first, second, st_gid, Diff::Gids);
+        }
         compare_metadata_field!(self, first, second, st_nlink, Diff::Nlinks);
-        compare_metadata_field!(self, first, second, st_uid, Diff::Uids);
-        compare_metadata_field!(self, first, second, st_gid, Diff::Gids);
 
         let file_type = first.metadata.stat().st_mode & libc::S_IFMT;
         match file_type {
@@ -440,6 +442,7 @@ mod test {
     use std::io;
     use std::io::prelude::*;
     use std::os::unix;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile;
     use walkdir;
 
@@ -594,6 +597,16 @@ mod test {
         parent.new_file(filename, 0o644)?.write_all(b"a")?;
 
         let fscmp = FSCmp::new(dir.path().into(), dir.path().into(), None, HashSet::new());
+        assert_eq!(fscmp.dirs()?, Comparison::Equal);
+        Ok(())
+    }
+
+    #[test]
+    fn test_root_mode() -> failure::Fallible<()> {
+        let dir1 = tempfile::tempdir()?;
+        let dir2 = tempfile::tempdir()?;
+        fs::set_permissions(dir2.path(), fs::Permissions::from_mode(0o777))?;
+        let fscmp = FSCmp::new(dir1.path().into(), dir2.path().into(), None, HashSet::new());
         assert_eq!(fscmp.dirs()?, Comparison::Equal);
         Ok(())
     }
