@@ -16,10 +16,7 @@ pub trait FileExtExact: FileExt {
             }
         }
         if !buf.is_empty() {
-            Err(Error::new(
-                ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ))
+            Err(Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer"))
         } else {
             Ok(())
         }

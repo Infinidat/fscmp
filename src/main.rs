@@ -71,11 +71,7 @@ fn run() -> Result<Comparison, failure::Error> {
                 time_format: Some("%F %T%.3f"),
                 ..Default::default()
             },
-            File::create(log_dir.join(format!(
-                "{}.{}.log",
-                env!("CARGO_PKG_NAME"),
-                process::id()
-            )))?,
+            File::create(log_dir.join(format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id())))?,
         ).unwrap();
     }
 
