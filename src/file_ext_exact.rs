@@ -26,8 +26,4 @@ pub trait FileExtExact: FileExt {
     }
 }
 
-impl<T> FileExtExact for T
-where
-    T: FileExt,
-{
-}
+impl<T> FileExtExact for T where T: FileExt {}

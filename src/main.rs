@@ -39,24 +39,20 @@ fn run() -> Result<Comparison, failure::Error> {
                     } else {
                         Err("Log directory does not exist".into())
                     }
-                })
-                .help("Directory to store log(s) in"),
-        )
-        .arg(
+                }).help("Directory to store log(s) in"),
+        ).arg(
             Arg::with_name("content-size")
                 .long("content-size")
                 .takes_value(true)
                 .value_name("SIZE")
                 .help("Compare arguments using specified size (used for block devices)"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("full-compare-limit")
                 .long("full-compare-limit")
                 .takes_value(true)
                 .value_name("SIZE")
                 .help("Size in bytes to limit full compare (larger files will be sampled)"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("ignored-dirs")
                 .long("ignore-dir")
                 .takes_value(true)
@@ -64,8 +60,7 @@ fn run() -> Result<Comparison, failure::Error> {
                 .multiple(true)
                 .number_of_values(1)
                 .help("Directories to ignore when comparing"),
-        )
-        .get_matches();
+        ).get_matches();
 
     if let Some(log_dir) = matches.value_of_os("log-dir") {
         let log_dir = Path::new(log_dir);

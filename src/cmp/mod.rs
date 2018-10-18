@@ -260,8 +260,7 @@ impl FSCmp {
                         &second,
                     ))
                 }
-            })
-            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            }).find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or(Ok(Comparison::Equal))
     }
 
@@ -324,7 +323,9 @@ impl FSCmp {
                     .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
                 file2
                     .read_at_exact(&mut chunked_data2, chunk.start)
-                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+                    .with_context(|e| {
+                        format!("\"{}\": {}", second.path.display().to_string(), e)
+                    })?;
 
                 Ok(if chunked_data1 == chunked_data2 {
                     Comparison::Equal
@@ -342,8 +343,7 @@ impl FSCmp {
                         &second,
                     )
                 })
-            })
-            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            }).find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or({
                 debug!(
                     "Compare of \"{}\" and \"{}\" finished",
