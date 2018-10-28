@@ -5,6 +5,7 @@ use super::file_ext_exact::FileExtExact;
 use failure::{self, ResultExt};
 use itertools::Itertools;
 use libc;
+use log::debug;
 use openat::{self, Dir};
 use rayon::prelude::*;
 use std;

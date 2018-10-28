@@ -1,10 +1,8 @@
-#[macro_use]
 extern crate clap;
-#[macro_use]
-extern crate log;
 extern crate failure;
 extern crate itertools;
 extern crate libc;
+extern crate log;
 extern crate openat;
 extern crate rayon;
 extern crate simplelog;
@@ -16,8 +14,9 @@ extern crate walkdir;
 mod cmp;
 mod file_ext_exact;
 
-use clap::{App, Arg};
+use clap::{crate_version, value_t, App, Arg};
 use cmp::{Comparison, FSCmp};
+use log::error;
 use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
