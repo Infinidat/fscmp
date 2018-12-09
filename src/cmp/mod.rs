@@ -243,7 +243,8 @@ impl FSCmp {
                         &second,
                     ))
                 }
-            }).find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            })
+            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or(Ok(Comparison::Equal))
     }
 
@@ -316,7 +317,8 @@ impl FSCmp {
                         &second,
                     )
                 })
-            }).find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            })
+            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or({
                 debug!(
                     "Compare of \"{}\" and \"{}\" finished",
