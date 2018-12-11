@@ -2,16 +2,15 @@ mod comparison;
 
 pub use self::comparison::{Comparison, Diff};
 use super::file_ext_exact::FileExtExact;
-use failure::{self, ResultExt};
-use itertools::Itertools;
+use failure::{Fallible, ResultExt};
 use libc;
 use log::debug;
 use openat::{self, Dir};
 use rayon::prelude::*;
-use std;
 use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -45,7 +44,7 @@ pub struct FSCmp {
 }
 
 impl EntryInfo {
-    fn dir(path: &Path) -> Result<EntryInfo, failure::Error> {
+    fn dir(path: &Path) -> Fallible<EntryInfo> {
         assert!(path.is_dir());
         let path = path.canonicalize()?;
         let dir = Dir::open(&path)?;
@@ -59,7 +58,7 @@ impl EntryInfo {
         })
     }
 
-    fn file(path: &Path) -> Result<EntryInfo, failure::Error> {
+    fn file(path: &Path) -> Fallible<EntryInfo> {
         assert!(!path.is_dir());
         let path = path.canonicalize()?;
         let dir = Dir::open(path.parent().unwrap())?;
@@ -73,7 +72,7 @@ impl EntryInfo {
         })
     }
 
-    fn child_entry(&self, name: &Path) -> Result<EntryInfo, failure::Error> {
+    fn child_entry(&self, name: &Path) -> Fallible<EntryInfo> {
         let path = if self.path.starts_with(".") {
             name.to_path_buf()
         } else {
@@ -133,11 +132,11 @@ impl FSCmp {
         }
     }
 
-    pub fn dirs(&self) -> Result<Comparison, failure::Error> {
+    pub fn dirs(&self) -> Fallible<Comparison> {
         self.entry_eq(&EntryInfo::dir(&self.first)?, &EntryInfo::dir(&self.second)?)
     }
 
-    pub fn contents(&self, size: u64) -> Result<Comparison, failure::Error> {
+    pub fn contents(&self, size: u64) -> Fallible<Comparison> {
         self.contents_eq(&EntryInfo::file(&self.first)?, &EntryInfo::file(&self.second)?, size)
     }
 
@@ -156,7 +155,7 @@ impl FSCmp {
         comp
     }
 
-    fn entry_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn entry_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         debug!(
             "Comparing \"{}\" and \"{}\"",
             first.path.display(),
@@ -212,17 +211,31 @@ impl FSCmp {
         }
     }
 
-    fn dir_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
-        let first_contents: HashSet<PathBuf> = first
+    fn entry_filter_map(&self, path_res: io::Result<openat::Entry>) -> Option<io::Result<PathBuf>> {
+        match path_res {
+            Ok(path) => {
+                let path = Path::new(path.file_name());
+                if self.ignored_dirs.contains::<Path>(path) {
+                    None
+                } else {
+                    Some(Ok(PathBuf::from(path)))
+                }
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+
+    fn list_dir(&self, entry: &EntryInfo) -> io::Result<HashSet<PathBuf>> {
+        entry
             .parent
-            .list_dir(&first.path)?
-            .map_results(|path| path.file_name().to_os_string().into())
-            .collect::<Result<_, _>>()?;
-        let second_contents: HashSet<PathBuf> = second
-            .parent
-            .list_dir(&second.path)?
-            .map_results(|path| path.file_name().to_os_string().into())
-            .collect::<Result<_, _>>()?;
+            .list_dir(&entry.path)?
+            .filter_map(|p| self.entry_filter_map(p))
+            .collect::<Result<_, _>>()
+    }
+
+    fn dir_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
+        let first_contents: HashSet<_> = self.list_dir(first).context("first")?;
+        let second_contents: HashSet<_> = self.list_dir(second).context("second")?;
 
         if first_contents.len() != second_contents.len() {
             return Ok(self.unequal(Diff::DirContents(first_contents, second_contents), &first, &second));
@@ -230,7 +243,6 @@ impl FSCmp {
 
         first_contents
             .par_iter()
-            .filter(|name| !self.ignored_dirs.contains::<Path>(name))
             .map(|name| {
                 if second_contents.contains(name) {
                     let first = first.child_entry(&name)?;
@@ -248,14 +260,14 @@ impl FSCmp {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
-    fn file_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn file_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_size, Diff::Sizes);
 
         let metadata_len = first.metadata.len();
         self.contents_eq(first, second, metadata_len)
     }
 
-    fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Result<Comparison, failure::Error> {
+    fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Fallible<Comparison> {
         const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
@@ -329,7 +341,7 @@ impl FSCmp {
             })
     }
 
-    fn symlink_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn symlink_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         let first_target = first.parent.read_link(&first.path)?;
         let second_target = second.parent.read_link(&second.path)?;
         if first_target != second_target {
@@ -339,21 +351,21 @@ impl FSCmp {
         Ok(Comparison::Equal)
     }
 
-    fn block_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn block_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         self.char_device_eq(first, second)
     }
 
-    fn char_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn char_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
-    fn fifo_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn fifo_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
 
-    fn socket_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Result<Comparison, failure::Error> {
+    fn socket_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
 }
@@ -413,7 +425,7 @@ mod test {
         assert_eq!(calc_chunk_count(20, 2), 10);
     }
 
-    fn mknod(path: PathBuf, mode: libc::mode_t, dev: libc::dev_t) -> Result<(), failure::Error> {
+    fn mknod(path: PathBuf, mode: libc::mode_t, dev: libc::dev_t) -> Fallible<()> {
         use std::ffi;
         use std::os::unix::ffi::OsStringExt;
 
@@ -428,7 +440,7 @@ mod test {
         Ok(())
     }
 
-    fn generate_tree() -> Result<tempfile::TempDir, failure::Error> {
+    fn generate_tree() -> Fallible<tempfile::TempDir> {
         let dir = tempfile::tempdir()?;
         for dir in &[dir.path(), &dir.path().join("directory")] {
             fs::create_dir(dir.join("directory"))?;
@@ -443,7 +455,7 @@ mod test {
     }
 
     #[test]
-    fn test_simple() -> Result<(), failure::Error> {
+    fn test_simple() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let fscmp = FSCmp::new(dir1.path().into(), dir1.path().into(), None, HashSet::new());
         assert_eq!(fscmp.dirs()?, Comparison::Equal);
@@ -467,7 +479,7 @@ mod test {
     }
 
     #[test]
-    fn test_permissions() -> Result<(), failure::Error> {
+    fn test_permissions() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let dir2 = generate_tree()?;
         for entry in walkdir::WalkDir::new(dir1.path())
@@ -499,7 +511,7 @@ mod test {
     }
 
     #[test]
-    fn test_contents() -> Result<(), failure::Error> {
+    fn test_contents() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let dir2 = generate_tree()?;
 
@@ -533,7 +545,7 @@ mod test {
     }
 
     #[test]
-    fn test_path_max() -> Result<(), failure::Error> {
+    fn test_path_max() -> Fallible<()> {
         let dir = tempfile::tempdir()?;
         let parent = openat::Dir::open(dir.path())?;
         let name = "a".repeat(255);

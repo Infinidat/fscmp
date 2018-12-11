@@ -128,9 +128,7 @@ impl<'a> fmt::Display for BlockFormat<'a> {
     }
 }
 
-struct OptionFormat<'a, T>(&'a Option<T>)
-where
-    T: 'a;
+struct OptionFormat<'a, T>(&'a Option<T>);
 
 impl<'a> fmt::Display for OptionFormat<'a, PathBuf> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
