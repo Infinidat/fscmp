@@ -19,8 +19,11 @@ matrix:
 before_install:
   - rustup target add $TARGET || true
   - if [[ $TARGET == 'x86_64-unknown-linux-musl' ]]; then sudo apt update && sudo apt install -y musl-tools; fi
+  - cargo component add rustfmt clippy
 
 script:
+  - cargo fmt -- --check
+  - cargo clippy
   - cargo build --target $TARGET
   - cargo build --target $TARGET --release
   - cargo test --target $TARGET
