@@ -530,7 +530,7 @@ mod test {
         assert_eq!(fscmp.contents(1024 * 1024)?, Comparison::Equal);
 
         let offset = file1.seek(io::SeekFrom::Start(532 * 1024 + 13))?;
-        file1.write_all("a".as_bytes())?;
+        file1.write_all(b"a")?;
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
         if let Comparison::Unequal {
             diff: Diff::Contents(lba, ..),
