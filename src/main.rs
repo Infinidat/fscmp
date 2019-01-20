@@ -1,4 +1,3 @@
-#![cfg_attr(feature = "cargo-clippy", deny(clippy::all))]
 mod cmp;
 mod file_ext_exact;
 
