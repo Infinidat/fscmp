@@ -30,10 +30,9 @@ script:
   - cargo test --target $TARGET --release
 
 branches:
-  only:
-    - staging
-    - trying
-    - master
+  except:
+    - staging.tmp
+    - trying.tmp
 
 notifications:
   email:
