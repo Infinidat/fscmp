@@ -26,6 +26,12 @@ script:
   - cargo test --target $TARGET
   - cargo test --target $TARGET --release
 
+branches:
+  only:
+    - staging
+    - trying
+    - master
+
 notifications:
   email:
     on_success: never
