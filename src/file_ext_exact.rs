@@ -7,8 +7,7 @@ pub trait FileExtExact: FileExt {
             match self.read_at(buf, offset) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let tmp = buf;
-                    buf = &mut tmp[n..];
+                    buf = &mut buf[n..];
                     offset += n as u64;
                 }
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => {}

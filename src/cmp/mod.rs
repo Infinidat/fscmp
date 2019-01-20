@@ -122,8 +122,8 @@ impl FSCmp {
         second: PathBuf,
         full_compare_limit: Option<u64>,
         ignored_dirs: HashSet<PathBuf>,
-    ) -> FSCmp {
-        FSCmp {
+    ) -> Self {
+        Self {
             first,
             second,
             full_compare_limit,
@@ -331,7 +331,7 @@ impl FSCmp {
                 })
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
-            .unwrap_or({
+            .unwrap_or_else(|| {
                 debug!(
                     "Compare of \"{}\" and \"{}\" finished",
                     first.path.display(),
