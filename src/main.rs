@@ -9,7 +9,7 @@ use std::fs::File;
 use std::path::Path;
 use std::process;
 
-fn run() -> Result<Comparison, failure::Error> {
+fn run() -> failure::Fallible<Comparison> {
     let matches = App::new("fscmp")
         .version(crate_version!())
         .arg(Arg::with_name("first").required(true))
@@ -108,7 +108,7 @@ fn main() {
         Err(e) => {
             error!("Error: {}", e);
             eprintln!("Error: {}", e);
-            std::process::exit(1);
+            std::process::exit(2);
         }
     }
 }
