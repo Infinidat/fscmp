@@ -5,6 +5,7 @@ use crate::cmp::{Comparison, FSCmp};
 use clap::{crate_version, value_t, App, Arg};
 use log::error;
 use std::collections::HashSet;
+#[cfg(feature = "simplelog")]
 use std::fs::File;
 use std::path::Path;
 use std::process;
@@ -55,6 +56,8 @@ fn run() -> failure::Fallible<Comparison> {
 
     if let Some(log_dir) = matches.value_of_os("log-dir") {
         let log_dir = Path::new(log_dir);
+        let log_file = log_dir.join(format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id()));
+        #[cfg(feature = "simplelog")]
         simplelog::WriteLogger::init(
             simplelog::LevelFilter::max(),
             simplelog::Config {
@@ -62,9 +65,15 @@ fn run() -> failure::Fallible<Comparison> {
                 time_format: Some("%F %T%.3f"),
                 ..Default::default()
             },
-            File::create(log_dir.join(format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id())))?,
+            File::create(log_file)?,
         )
         .unwrap();
+        #[cfg(feature = "loggest")]
+        {
+            let mut log_file = log_file;
+            log_file.set_extension("");
+            loggest::init(log::LevelFilter::max(), log_file).unwrap();
+        }
     }
 
     let content_size = if matches.is_present("content-size") {
