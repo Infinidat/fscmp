@@ -8,7 +8,7 @@ Release: 1
 %{summary}.
 
 %build
-cargo build --release --target %{_TARGET}
+cargo build --release --target %{_TARGET} %{?_CARGO_BUILD_ARGS}
 
 %install
 install -D -m 755 %{_sourcedir}/target/%{_TARGET}/release/%{name} -t %{buildroot}%{_bindir}
