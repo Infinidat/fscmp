@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "fscmp"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.48 (registry+https://github.com/rust-lang/crates.io-index)",

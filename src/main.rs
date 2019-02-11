@@ -25,19 +25,19 @@ fn parse_log_dir(src: &OsStr) -> Result<PathBuf, OsString> {
 #[structopt(name = "fscmp")]
 /// Directory/file comparison utility
 struct Opt {
-    #[structopt(long, parse(try_from_os_str = "parse_log_dir"))]
+    #[structopt(name = "log-dir", long, parse(try_from_os_str = "parse_log_dir"))]
     /// Directory to store log(s) in
     log_dir: Option<PathBuf>,
 
-    #[structopt(long)]
+    #[structopt(name = "content-size", long)]
     /// Compare arguments using specified size (used for block devices)
     content_size: Option<u64>,
 
-    #[structopt(long)]
+    #[structopt(name = "full-compare-limit", long)]
     /// Size in bytes to limit full compare (larger files will be sampled)
     full_compare_limit: Option<u64>,
 
-    #[structopt(long, raw(number_of_values = "1"))]
+    #[structopt(name = "ignore-dir", long, raw(number_of_values = "1"))]
     /// Directories to ignore when comparing
     ignored_dirs: Vec<PathBuf>,
 
