@@ -2,60 +2,56 @@ mod cmp;
 mod file_ext_exact;
 
 use crate::cmp::{Comparison, FSCmp};
-use clap::{crate_version, value_t, App, Arg};
 use log::error;
 use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 #[cfg(feature = "simplelog")]
 use std::fs::File;
-use std::path::Path;
+use std::iter::FromIterator;
+use std::path::{Path, PathBuf};
 use std::process;
+use structopt::StructOpt;
+
+fn parse_log_dir(src: &OsStr) -> Result<PathBuf, OsString> {
+    let path = Path::new(src);
+    if path.is_dir() {
+        Ok(path.into())
+    } else {
+        Err("Log directory does not exist".into())
+    }
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "fscmp")]
+/// Directory/file comparison utility
+struct Opt {
+    #[structopt(long, parse(try_from_os_str = "parse_log_dir"))]
+    /// Directory to store log(s) in
+    log_dir: Option<PathBuf>,
+
+    #[structopt(long)]
+    /// Compare arguments using specified size (used for block devices)
+    content_size: Option<u64>,
+
+    #[structopt(long)]
+    /// Size in bytes to limit full compare (larger files will be sampled)
+    full_compare_limit: Option<u64>,
+
+    #[structopt(long, raw(number_of_values = "1"))]
+    /// Directories to ignore when comparing
+    ignored_dirs: Vec<PathBuf>,
+
+    #[structopt(parse(from_os_str), raw(required = "true"))]
+    first: PathBuf,
+
+    #[structopt(parse(from_os_str), raw(required = "true"))]
+    second: PathBuf,
+}
 
 fn run() -> failure::Fallible<Comparison> {
-    let matches = App::new("fscmp")
-        .version(crate_version!())
-        .arg(Arg::with_name("first").required(true))
-        .arg(Arg::with_name("second").required(true))
-        .arg(
-            Arg::with_name("log-dir")
-                .long("log-dir")
-                .takes_value(true)
-                .value_name("LOG_DIR")
-                .validator_os(|log_dir| {
-                    if Path::new(log_dir).is_dir() {
-                        Ok(())
-                    } else {
-                        Err("Log directory does not exist".into())
-                    }
-                })
-                .help("Directory to store log(s) in"),
-        )
-        .arg(
-            Arg::with_name("content-size")
-                .long("content-size")
-                .takes_value(true)
-                .value_name("SIZE")
-                .help("Compare arguments using specified size (used for block devices)"),
-        )
-        .arg(
-            Arg::with_name("full-compare-limit")
-                .long("full-compare-limit")
-                .takes_value(true)
-                .value_name("SIZE")
-                .help("Size in bytes to limit full compare (larger files will be sampled)"),
-        )
-        .arg(
-            Arg::with_name("ignored-dirs")
-                .long("ignore-dir")
-                .takes_value(true)
-                .value_name("DIR")
-                .multiple(true)
-                .number_of_values(1)
-                .help("Directories to ignore when comparing"),
-        )
-        .get_matches();
+    let opt = Opt::from_args();
 
-    if let Some(log_dir) = matches.value_of_os("log-dir") {
-        let log_dir = Path::new(log_dir);
+    if let Some(log_dir) = opt.log_dir {
         let log_file = log_dir.join(format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id()));
         #[cfg(feature = "simplelog")]
         simplelog::WriteLogger::init(
@@ -76,31 +72,14 @@ fn run() -> failure::Fallible<Comparison> {
         }
     }
 
-    let content_size = if matches.is_present("content-size") {
-        Some(value_t!(matches, "content-size", u64).unwrap_or_else(|e| e.exit()))
-    } else {
-        None
-    };
-
-    let full_compare_limit = if matches.is_present("full-compare-limit") {
-        Some(value_t!(matches, "full-compare-limit", u64).unwrap_or_else(|e| e.exit()))
-    } else {
-        None
-    };
-
-    let ignored_dirs = matches
-        .values_of_os("ignored-dirs")
-        .map(|v| v.map(|s| s.into()).collect())
-        .unwrap_or_else(HashSet::new);
-
     let fscmp = FSCmp::new(
-        matches.value_of_os("first").unwrap().into(),
-        matches.value_of_os("second").unwrap().into(),
-        full_compare_limit,
-        ignored_dirs,
+        opt.first,
+        opt.second,
+        opt.full_compare_limit,
+        HashSet::from_iter(opt.ignored_dirs.into_iter()),
     );
 
-    Ok(if let Some(content_size) = content_size {
+    Ok(if let Some(content_size) = opt.content_size {
         fscmp.contents(content_size)?
     } else {
         fscmp.dirs()?
