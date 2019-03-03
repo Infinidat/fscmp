@@ -1,5 +1,4 @@
 mod cmp;
-mod file_ext_exact;
 
 use crate::cmp::{Comparison, FSCmp};
 use log::error;

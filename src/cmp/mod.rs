@@ -1,7 +1,6 @@
 mod comparison;
 
 pub use self::comparison::{Comparison, Diff};
-use super::file_ext_exact::FileExtExact;
 use failure::{Fallible, ResultExt};
 use libc;
 use log::debug;
@@ -11,6 +10,7 @@ use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -307,10 +307,10 @@ impl FSCmp {
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
                 file1
-                    .read_at_exact(&mut chunked_data1, chunk.start)
+                    .read_exact_at(&mut chunked_data1, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
                 file2
-                    .read_at_exact(&mut chunked_data2, chunk.start)
+                    .read_exact_at(&mut chunked_data2, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
 
                 Ok(if chunked_data1 == chunked_data2 {
