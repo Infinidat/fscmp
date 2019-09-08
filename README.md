@@ -1,4 +1,4 @@
-# fscmp [![Latest version](https://img.shields.io/crates/v/fscmp.svg)](https://crates.io/crates/fscmp) [![Build Status](https://travis-ci.org/drrlvn/fscmp.svg?branch=master)](https://travis-ci.org/drrlvn/fscmp)
+# fscmp [![Latest version](https://img.shields.io/crates/v/fscmp.svg)](https://crates.io/crates/fscmp)
 
 Utility for comparing files/directories.
 
