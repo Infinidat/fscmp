@@ -11,15 +11,15 @@ edition = "2018"
 default = ["simplelog"]
 
 [dependencies]
-failure = "0.1"
-libc = "0.2"
-log = "0.4"
+failure = "0.1.5"
+libc = "0.2.62"
+log = "0.4.8"
 loggest = { version = "0.2.1", optional = true }
-openat = "0.1"
-rayon = "1.0"
-simplelog = { version = "0.6", optional = true }
-structopt = "0.2"
+openat = "0.1.18"
+rayon = "1.2.0"
+simplelog = { version = "0.7.1", optional = true }
+structopt = "0.3.1"
 
 [dev-dependencies]
-tempfile = "3.0"
-walkdir = "2.1"
+tempfile = "3.1.0"
+walkdir = "2.2.9"

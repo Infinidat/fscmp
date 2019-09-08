@@ -25,30 +25,30 @@ fn parse_log_dir(src: &OsStr) -> Result<PathBuf, OsString> {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "fscmp")]
+#[structopt(about)]
 /// Directory/file comparison utility
 struct Opt {
     #[cfg(feature = "simplelog")]
-    #[structopt(name = "log-dir", long, parse(try_from_os_str = "parse_log_dir"))]
+    #[structopt(long, parse(try_from_os_str = parse_log_dir))]
     /// Directory to store log(s) in
     log_dir: Option<PathBuf>,
 
-    #[structopt(name = "content-size", long)]
+    #[structopt(long)]
     /// Compare arguments using specified size (used for block devices)
     content_size: Option<u64>,
 
-    #[structopt(name = "full-compare-limit", long)]
+    #[structopt(long)]
     /// Size in bytes to limit full compare (larger files will be sampled)
     full_compare_limit: Option<u64>,
 
-    #[structopt(name = "ignore-dir", long, raw(number_of_values = "1"))]
+    #[structopt(long, number_of_values = 1)]
     /// Directories to ignore when comparing
     ignored_dirs: Vec<PathBuf>,
 
-    #[structopt(parse(from_os_str), raw(required = "true"))]
+    #[structopt(parse(from_os_str), required = true)]
     first: PathBuf,
 
-    #[structopt(parse(from_os_str), raw(required = "true"))]
+    #[structopt(parse(from_os_str), required = true)]
     second: PathBuf,
 }
 
@@ -58,7 +58,7 @@ fn run() -> failure::Fallible<Comparison> {
     #[cfg(feature = "loggest")]
     let mut _flush_log = loggest::init(
         log::LevelFilter::max(),
-        format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id()),
+        format!("{}.{}", env!("CARGO_PKG_NAME"), process::id()),
     )
     .unwrap();
 
@@ -68,11 +68,10 @@ fn run() -> failure::Fallible<Comparison> {
             let log_file = log_dir.join(format!("{}.{}.log", env!("CARGO_PKG_NAME"), process::id()));
             simplelog::WriteLogger::init(
                 simplelog::LevelFilter::max(),
-                simplelog::Config {
-                    target: None,
-                    time_format: Some("%F %T%.3f"),
-                    ..Default::default()
-                },
+                simplelog::ConfigBuilder::new()
+                    .set_target_level(simplelog::LevelFilter::Off)
+                    .set_time_format_str("%F %T%.3f")
+                    .build(),
                 File::create(log_file)?,
             )
             .unwrap();
