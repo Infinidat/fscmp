@@ -4,13 +4,18 @@ pub use self::comparison::{Comparison, Diff};
 use failure::{Fallible, ResultExt};
 use libc;
 use log::debug;
+use nix::fcntl;
+use nix::sys::stat::Mode;
 use openat::{self, Dir};
 use rayon::prelude::*;
 use std::cmp::{max, min};
 use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::io;
 use std::os::unix::fs::FileExt;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -271,6 +276,20 @@ impl FSCmp {
         const BUF_SIZE: usize = 256 * 1024;
         const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
 
+        fn open_file(info: &EntryInfo) -> nix::Result<File> {
+            unsafe {
+                Ok(File::from_raw_fd(fcntl::openat(
+                    info.parent.as_raw_fd(),
+                    &info.path,
+                    #[cfg(not(test))]
+                    fcntl::OFlag::O_DIRECT,
+                    #[cfg(test)]
+                    fcntl::OFlag::empty(),
+                    Mode::empty(),
+                )?))
+            }
+        }
+
         if size == 0 {
             return Ok(Comparison::Equal);
         }
@@ -282,8 +301,8 @@ impl FSCmp {
             size
         );
 
-        let file1 = first.parent.open_file(&first.path)?;
-        let file2 = second.parent.open_file(&second.path)?;
+        let file1 = open_file(first)?;
+        let file2 = open_file(second)?;
 
         let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
         let leap = calc_leap(size, limit, BUF_SIZE_U64);
@@ -300,8 +319,8 @@ impl FSCmp {
                     second.path.display()
                 );
 
-                let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
-                let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::uninitialized() };
+                let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
 
                 let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
@@ -401,7 +420,7 @@ fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::fs::{self, File};
+    use std::fs;
     use std::io;
     use std::io::prelude::*;
     use std::os::unix;
