@@ -20,6 +20,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const BLOCK_SIZE: usize = 512;
+const BUF_SIZE: usize = 256 * 1024;
+const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
+
+#[repr(align(512))]
+struct AlignedBuffer([u8; BUF_SIZE]);
 
 trait SliceRange {
     fn subslice(&self, start: usize, size: usize) -> &Self;
@@ -273,9 +278,6 @@ impl FSCmp {
     }
 
     fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Fallible<Comparison> {
-        const BUF_SIZE: usize = 256 * 1024;
-        const BUF_SIZE_U64: u64 = BUF_SIZE as u64;
-
         fn open_file(info: &EntryInfo) -> nix::Result<File> {
             unsafe {
                 Ok(File::from_raw_fd(fcntl::openat(
@@ -319,8 +321,10 @@ impl FSCmp {
                     second.path.display()
                 );
 
-                let mut data1: [u8; BUF_SIZE] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-                let mut data2: [u8; BUF_SIZE] = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                let data1 = &mut buffer1.0;
+                let data2 = &mut buffer2.0;
 
                 let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
