@@ -4,6 +4,8 @@ Version: %{_VERSION}
 License: ASL 2.0
 Release: 1
 
+%define _binary_payload w9.xzdio
+
 %description
 %{summary}.
 
