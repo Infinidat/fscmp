@@ -416,7 +416,7 @@ fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
     if limit < chunk_size {
         limit
     } else {
-        max::<u64>(chunk_size, size / (limit / chunk_size))
+        max::<u64>(chunk_size, size / ((limit + chunk_size - 1) / chunk_size))
     }
 }
 
@@ -438,6 +438,7 @@ mod test {
         assert_eq!(calc_leap(150, 30, 2), 10);
         assert_eq!(calc_leap(25, 50, 2), 2);
         assert_eq!(calc_leap(25, 1, 2), 1);
+        assert_eq!(calc_leap(2_000_000_000, 2_000_000_000, BUF_SIZE_U64), BUF_SIZE_U64);
     }
 
     #[test]
