@@ -41,7 +41,7 @@ struct Opt {
     /// Size in bytes to limit full compare (larger files will be sampled)
     full_compare_limit: Option<u64>,
 
-    #[structopt(long, number_of_values = 1)]
+    #[structopt(long = "ignore-dir", number_of_values = 1)]
     /// Directories to ignore when comparing
     ignored_dirs: Vec<PathBuf>,
 
