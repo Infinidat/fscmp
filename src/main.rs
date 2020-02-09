@@ -1,7 +1,7 @@
 mod cmp;
 
 use crate::cmp::{Comparison, FSCmp};
-use log::error;
+use log::{debug, error};
 use std::collections::HashSet;
 #[cfg(feature = "simplelog")]
 use std::ffi::{OsStr, OsString};
@@ -38,10 +38,12 @@ struct Opt {
     content_size: Option<u64>,
 
     #[structopt(long)]
+    #[cfg(unix)]
     /// Size in bytes to limit full compare (larger files will be sampled)
     full_compare_limit: Option<u64>,
 
     #[structopt(long = "ignore-dir", number_of_values = 1)]
+    #[cfg(unix)]
     /// Directories to ignore when comparing
     ignored_dirs: Vec<PathBuf>,
 
@@ -81,20 +83,27 @@ fn run() -> failure::Fallible<Comparison> {
     let fscmp = FSCmp::new(
         opt.first,
         opt.second,
+        #[cfg(unix)]
         opt.full_compare_limit,
+        #[cfg(unix)]
         HashSet::from_iter(opt.ignored_dirs.into_iter()),
     );
 
     Ok(if let Some(content_size) = opt.content_size {
         fscmp.contents(content_size)?
     } else {
-        fscmp.dirs()?
+        Comparison::Equal
+        // ()
+        // fscmp.dirs()?
     })
 }
 
 fn main() {
     match run() {
-        Ok(Comparison::Equal) => (),
+        Ok(Comparison::Equal) => {
+            eprintln!("Equal");
+            ()
+        }
         Ok(comp) => {
             eprintln!("{}", comp);
             std::process::exit(1);

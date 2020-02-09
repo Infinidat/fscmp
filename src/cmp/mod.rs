@@ -2,10 +2,14 @@ mod comparison;
 
 pub use self::comparison::{Comparison, Diff};
 use failure::{Fallible, ResultExt};
+#[cfg(unix)]
 use libc;
 use log::debug;
+#[cfg(unix)]
 use nix::fcntl;
+#[cfg(unix)]
 use nix::sys::stat::Mode;
+#[cfg(unix)]
 use openat::{self, Dir};
 use rayon::prelude::*;
 use std::cmp::{max, min};
@@ -13,7 +17,9 @@ use std::collections::hash_map;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(unix)]
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -37,12 +43,16 @@ impl<T> SliceRange for [T] {
 }
 
 struct EntryInfo {
+    #[cfg(unix)]
     parent: Arc<Dir>,
+    #[cfg(unix)]
     parent_path: PathBuf,
     path: PathBuf,
+    #[cfg(unix)]
     metadata: openat::Metadata,
 }
 
+#[cfg(unix)]
 #[derive(Default)]
 pub struct FSCmp {
     first: PathBuf,
@@ -52,7 +62,15 @@ pub struct FSCmp {
     inode_maps: Mutex<[HashMap<libc::ino_t, PathBuf>; 2]>,
 }
 
+#[cfg(windows)]
+#[derive(Default)]
+pub struct FSCmp {
+    first: PathBuf,
+    second: PathBuf,
+}
+
 impl EntryInfo {
+    #[cfg(unix)]
     fn dir(path: &Path) -> Fallible<EntryInfo> {
         assert!(path.is_dir());
         let path = path.canonicalize()?;
@@ -70,17 +88,23 @@ impl EntryInfo {
     fn file(path: &Path) -> Fallible<EntryInfo> {
         assert!(!path.is_dir());
         let path = path.canonicalize()?;
+        #[cfg(unix)]
         let dir = Dir::open(path.parent().unwrap())?;
         let path = path.file_name().unwrap().to_os_string().into();
+        #[cfg(unix)]
         let metadata = dir.metadata(&path)?;
         Ok(EntryInfo {
+            #[cfg(unix)]
             parent: Arc::new(dir),
+            #[cfg(unix)]
             parent_path: Default::default(),
             path,
+            #[cfg(unix)]
             metadata,
         })
     }
 
+    #[cfg(unix)]
     fn child_entry(&self, name: &Path) -> Fallible<EntryInfo> {
         let path = if self.path.starts_with(".") {
             name.to_path_buf()
@@ -113,6 +137,7 @@ impl EntryInfo {
     }
 }
 
+#[cfg(unix)]
 macro_rules! compare_metadata_field {
     ($self:ident, $first:ident, $second:ident, $field:ident, $err_type:path) => {
         if $first.metadata.stat().$field != $second.metadata.stat().$field {
@@ -126,6 +151,7 @@ macro_rules! compare_metadata_field {
 }
 
 impl FSCmp {
+    #[cfg(unix)]
     pub fn new(
         first: PathBuf,
         second: PathBuf,
@@ -141,6 +167,16 @@ impl FSCmp {
         }
     }
 
+    #[cfg(windows)]
+    pub fn new(first: PathBuf, second: PathBuf) -> Self {
+        Self {
+            first,
+            second,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(unix)]
     pub fn dirs(&self) -> Fallible<Comparison> {
         self.entry_eq(&EntryInfo::dir(&self.first)?, &EntryInfo::dir(&self.second)?)
     }
@@ -149,6 +185,7 @@ impl FSCmp {
         self.contents_eq(&EntryInfo::file(&self.first)?, &EntryInfo::file(&self.second)?, size)
     }
 
+    #[cfg(unix)]
     fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
         let comp = Comparison::Unequal {
             diff,
@@ -164,6 +201,7 @@ impl FSCmp {
         comp
     }
 
+    #[cfg(unix)]
     fn entry_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         debug!(
             "Comparing \"{}\" and \"{}\"",
@@ -220,6 +258,7 @@ impl FSCmp {
         }
     }
 
+    #[cfg(unix)]
     fn entry_filter_map(&self, path_res: io::Result<openat::Entry>) -> Option<io::Result<PathBuf>> {
         match path_res {
             Ok(path) => {
@@ -234,6 +273,7 @@ impl FSCmp {
         }
     }
 
+    #[cfg(unix)]
     fn list_dir(&self, entry: &EntryInfo) -> io::Result<HashSet<PathBuf>> {
         entry
             .parent
@@ -242,6 +282,7 @@ impl FSCmp {
             .collect::<Result<_, _>>()
     }
 
+    #[cfg(unix)]
     fn dir_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         let first_contents: HashSet<_> = self.list_dir(first).context("first")?;
         let second_contents: HashSet<_> = self.list_dir(second).context("second")?;
@@ -269,6 +310,7 @@ impl FSCmp {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
+    #[cfg(unix)]
     fn file_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_size, Diff::Sizes);
 
@@ -277,92 +319,94 @@ impl FSCmp {
     }
 
     fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Fallible<Comparison> {
-        fn open_file(info: &EntryInfo) -> nix::Result<File> {
-            unsafe {
-                Ok(File::from_raw_fd(fcntl::openat(
-                    info.parent.as_raw_fd(),
-                    &info.path,
-                    #[cfg(not(test))]
-                    fcntl::OFlag::O_DIRECT,
-                    #[cfg(test)]
-                    fcntl::OFlag::empty(),
-                    Mode::empty(),
-                )?))
-            }
-        }
+        Ok(Comparison::Equal)
+        // fn open_file(info: &EntryInfo) -> nix::Result<File> {
+        //     unsafe {
+        //         Ok(File::from_raw_fd(fcntl::openat(
+        //             info.parent.as_raw_fd(),
+        //             &info.path,
+        //             #[cfg(not(test))]
+        //             fcntl::OFlag::O_DIRECT,
+        //             #[cfg(test)]
+        //             fcntl::OFlag::empty(),
+        //             Mode::empty(),
+        //         )?))
+        //     }
+        // }
 
-        if size == 0 {
-            return Ok(Comparison::Equal);
-        }
+        // if size == 0 {
+        //     return Ok(Comparison::Equal);
+        // }
 
-        debug!(
-            "Comparing contents of \"{}\" and \"{}\" of size {}",
-            first.path.display(),
-            second.path.display(),
-            size
-        );
+        // debug!(
+        //     "Comparing contents of \"{}\" and \"{}\" of size {}",
+        //     first.path.display(),
+        //     second.path.display(),
+        //     size
+        // );
 
-        let file1 = open_file(first)?;
-        let file2 = open_file(second)?;
+        // let file1 = open_file(first)?;
+        // let file2 = open_file(second)?;
 
-        let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
-        let leap = calc_leap(size, limit, BUF_SIZE_U64);
+        // let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
+        // let leap = calc_leap(size, limit, BUF_SIZE_U64);
 
-        (0..calc_chunk_count(limit, BUF_SIZE_U64))
-            .into_par_iter()
-            .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
-            .map(|chunk| {
-                debug!(
-                    "Comparing range [{}:{}) of \"{}\" and \"{}\"",
-                    chunk.start,
-                    chunk.end,
-                    first.path.display(),
-                    second.path.display()
-                );
+        // (0..calc_chunk_count(limit, BUF_SIZE_U64))
+        //     .into_par_iter()
+        //     .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
+        //     .map(|chunk| {
+        //         debug!(
+        //             "Comparing range [{}:{}) of \"{}\" and \"{}\"",
+        //             chunk.start,
+        //             chunk.end,
+        //             first.path.display(),
+        //             second.path.display()
+        //         );
 
-                let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-                let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-                let data1 = &mut buffer1.0;
-                let data2 = &mut buffer2.0;
+        //         let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+        //         let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+        //         let data1 = &mut buffer1.0;
+        //         let data2 = &mut buffer2.0;
 
-                let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
-                let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
+        //         let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
+        //         let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
-                file1
-                    .read_exact_at(&mut chunked_data1, chunk.start)
-                    .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
-                file2
-                    .read_exact_at(&mut chunked_data2, chunk.start)
-                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+        //         file1
+        //             .read_exact_at(&mut chunked_data1, chunk.start)
+        //             .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+        //         file2
+        //             .read_exact_at(&mut chunked_data2, chunk.start)
+        //             .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
 
-                Ok(if chunked_data1 == chunked_data2 {
-                    Comparison::Equal
-                } else {
-                    let diff_index = get_diff_index(chunked_data1, chunked_data2);
-                    let local_lba = diff_index / BLOCK_SIZE * BLOCK_SIZE;
-                    let lba = ((chunk.start as usize) + diff_index) / BLOCK_SIZE;
-                    self.unequal(
-                        Diff::Contents(
-                            lba as u64,
-                            chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
-                            chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
-                        ),
-                        &first,
-                        &second,
-                    )
-                })
-            })
-            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
-            .unwrap_or_else(|| {
-                debug!(
-                    "Compare of \"{}\" and \"{}\" finished",
-                    first.path.display(),
-                    second.path.display()
-                );
-                Ok(Comparison::Equal)
-            })
+        //         Ok(if chunked_data1 == chunked_data2 {
+        //             Comparison::Equal
+        //         } else {
+        //             let diff_index = get_diff_index(chunked_data1, chunked_data2);
+        //             let local_lba = diff_index / BLOCK_SIZE * BLOCK_SIZE;
+        //             let lba = ((chunk.start as usize) + diff_index) / BLOCK_SIZE;
+        //             self.unequal(
+        //                 Diff::Contents(
+        //                     lba as u64,
+        //                     chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
+        //                     chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
+        //                 ),
+        //                 &first,
+        //                 &second,
+        //             )
+        //         })
+        //     })
+        //     .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+        //     .unwrap_or_else(|| {
+        //         debug!(
+        //             "Compare of \"{}\" and \"{}\" finished",
+        //             first.path.display(),
+        //             second.path.display()
+        //         );
+        //         Ok(Comparison::Equal)
+        //     })
     }
 
+    #[cfg(unix)]
     fn symlink_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         let first_target = first.parent.read_link(&first.path)?;
         let second_target = second.parent.read_link(&second.path)?;
@@ -373,20 +417,24 @@ impl FSCmp {
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn block_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         self.char_device_eq(first, second)
     }
 
+    #[cfg(unix)]
     fn char_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn fifo_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn socket_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
@@ -420,6 +468,7 @@ fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
     }
 }
 
+#[cfg(unix)]
 #[cfg(test)]
 mod test {
     use super::*;
