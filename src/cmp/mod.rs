@@ -21,6 +21,8 @@ use std::io;
 use std::os::unix::fs::FileExt;
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, FromRawFd};
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -185,14 +187,17 @@ impl FSCmp {
         self.contents_eq(&EntryInfo::file(&self.first)?, &EntryInfo::file(&self.second)?, size)
     }
 
-    #[cfg(unix)]
     fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
         let comp = Comparison::Unequal {
             diff,
             first: self.first.clone(),
             second: self.second.clone(),
             path: if first.path == second.path {
-                Some(first.parent_path.join(&first.path))
+                None
+            // #[cfg(windows)]
+            // Some(first.path)
+            // #[cfg(unix)]
+            // Some(first.parent_path.join(&first.path))
             } else {
                 None
             },
@@ -319,91 +324,110 @@ impl FSCmp {
     }
 
     fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Fallible<Comparison> {
-        Ok(Comparison::Equal)
-        // fn open_file(info: &EntryInfo) -> nix::Result<File> {
-        //     unsafe {
-        //         Ok(File::from_raw_fd(fcntl::openat(
-        //             info.parent.as_raw_fd(),
-        //             &info.path,
-        //             #[cfg(not(test))]
-        //             fcntl::OFlag::O_DIRECT,
-        //             #[cfg(test)]
-        //             fcntl::OFlag::empty(),
-        //             Mode::empty(),
-        //         )?))
-        //     }
-        // }
+        #[cfg(unix)]
+        fn open_file(info: &EntryInfo) -> nix::Result<File> {
+            unsafe {
+                Ok(File::from_raw_fd(fcntl::openat(
+                    info.parent.as_raw_fd(),
+                    &info.path,
+                    #[cfg(not(test))]
+                    fcntl::OFlag::O_DIRECT,
+                    #[cfg(test)]
+                    fcntl::OFlag::empty(),
+                    Mode::empty(),
+                )?))
+            }
+        }
 
-        // if size == 0 {
-        //     return Ok(Comparison::Equal);
-        // }
+        #[cfg(windows)]
+        fn open_file(info: &EntryInfo) -> std::io::Result<File> {
+            unsafe { Ok(File::open(&info.path)?) }
+        }
 
-        // debug!(
-        //     "Comparing contents of \"{}\" and \"{}\" of size {}",
-        //     first.path.display(),
-        //     second.path.display(),
-        //     size
-        // );
+        if size == 0 {
+            return Ok(Comparison::Equal);
+        }
 
-        // let file1 = open_file(first)?;
-        // let file2 = open_file(second)?;
+        debug!(
+            "Comparing contents of \"{}\" and \"{}\" of size {}",
+            first.path.display(),
+            second.path.display(),
+            size
+        );
 
-        // let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
-        // let leap = calc_leap(size, limit, BUF_SIZE_U64);
+        let file1 = open_file(first)?;
+        let file2 = open_file(second)?;
 
-        // (0..calc_chunk_count(limit, BUF_SIZE_U64))
-        //     .into_par_iter()
-        //     .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
-        //     .map(|chunk| {
-        //         debug!(
-        //             "Comparing range [{}:{}) of \"{}\" and \"{}\"",
-        //             chunk.start,
-        //             chunk.end,
-        //             first.path.display(),
-        //             second.path.display()
-        //         );
+        #[cfg(unix)]
+        let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
 
-        //         let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-        //         let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-        //         let data1 = &mut buffer1.0;
-        //         let data2 = &mut buffer2.0;
+        #[cfg(windows)]
+        let limit = size;
+        let leap = calc_leap(size, limit, BUF_SIZE_U64);
 
-        //         let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
-        //         let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
+        debug!("Comparing {} chunks", calc_chunk_count(limit, BUF_SIZE_U64));
+        (0..calc_chunk_count(limit, BUF_SIZE_U64))
+            .into_par_iter()
+            .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
+            .map(|chunk| {
+                debug!(
+                    "Comparing range [{}:{}) of \"{}\" and \"{}\"",
+                    chunk.start,
+                    chunk.end,
+                    first.path.display(),
+                    second.path.display()
+                );
 
-        //         file1
-        //             .read_exact_at(&mut chunked_data1, chunk.start)
-        //             .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
-        //         file2
-        //             .read_exact_at(&mut chunked_data2, chunk.start)
-        //             .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+                let mut buffer1: Vec<u8> = vec![0; BUF_SIZE];
+                let mut buffer2: Vec<u8> = vec![0; BUF_SIZE];
+                let data1 = &mut buffer1;
+                let data2 = &mut buffer2;
 
-        //         Ok(if chunked_data1 == chunked_data2 {
-        //             Comparison::Equal
-        //         } else {
-        //             let diff_index = get_diff_index(chunked_data1, chunked_data2);
-        //             let local_lba = diff_index / BLOCK_SIZE * BLOCK_SIZE;
-        //             let lba = ((chunk.start as usize) + diff_index) / BLOCK_SIZE;
-        //             self.unequal(
-        //                 Diff::Contents(
-        //                     lba as u64,
-        //                     chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
-        //                     chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
-        //                 ),
-        //                 &first,
-        //                 &second,
-        //             )
-        //         })
-        //     })
-        //     .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
-        //     .unwrap_or_else(|| {
-        //         debug!(
-        //             "Compare of \"{}\" and \"{}\" finished",
-        //             first.path.display(),
-        //             second.path.display()
-        //         );
-        //         Ok(Comparison::Equal)
-        //     })
+                // let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                // let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                // let data1 = &mut buffer1.0;
+                // let data2 = &mut buffer2.0;
+
+                let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
+                let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
+
+                file1
+                    .seek_read(&mut chunked_data1, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                file2
+                    .seek_read(&mut chunked_data2, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+
+                Ok(if chunked_data1 == chunked_data2 {
+                    Comparison::Equal
+                } else {
+                    let diff_index = get_diff_index(chunked_data1, chunked_data2);
+                    let local_lba = diff_index / BLOCK_SIZE * BLOCK_SIZE;
+                    let lba = ((chunk.start as usize) + diff_index) / BLOCK_SIZE;
+                    self.unequal(
+                        Diff::Contents(
+                            lba as u64,
+                            chunked_data1.subslice(local_lba, BLOCK_SIZE).to_vec(),
+                            chunked_data2.subslice(local_lba, BLOCK_SIZE).to_vec(),
+                        ),
+                        &first,
+                        &second,
+                    )
+                })
+
+                // Ok(Comparison::Equal)
+            })
+            .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
+            .unwrap_or_else(|| {
+                debug!(
+                    "Compare of \"{}\" and \"{}\" finished",
+                    first.path.display(),
+                    second.path.display()
+                );
+                Ok(Comparison::Equal)
+            })
+
+        // Ok(Comparison::Equal)
     }
 
     #[cfg(unix)]

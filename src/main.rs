@@ -59,6 +59,7 @@ fn run() -> failure::Fallible<Comparison> {
 
     #[cfg(feature = "loggest")]
     let mut _flush_log = loggest::init(
+        2,
         log::LevelFilter::max(),
         format!("{}.{}", env!("CARGO_PKG_NAME"), process::id()),
     )
@@ -80,6 +81,7 @@ fn run() -> failure::Fallible<Comparison> {
         }
     }
 
+    debug!("Hello World");
     let fscmp = FSCmp::new(
         opt.first,
         opt.second,
