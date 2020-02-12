@@ -13,7 +13,7 @@ default = ["simplelog"]
 [dependencies]
 failure = "0.1.5"
 log = "0.4.8"
-loggest = { version = "0.2.1", optional = true }
+loggest = { version = "0.2.2", optional = true }
 rayon = "1.2.0"
 simplelog = { version = "0.7.1", optional = true }
 structopt = "0.3.1"

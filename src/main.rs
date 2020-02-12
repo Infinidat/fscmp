@@ -2,11 +2,13 @@ mod cmp;
 
 use crate::cmp::{Comparison, FSCmp};
 use log::{debug, error};
+#[cfg(unix)]
 use std::collections::HashSet;
 #[cfg(feature = "simplelog")]
 use std::ffi::{OsStr, OsString};
 #[cfg(feature = "simplelog")]
 use std::fs::File;
+#[cfg(unix)]
 use std::iter::FromIterator;
 #[cfg(feature = "simplelog")]
 use std::path::Path;
@@ -34,8 +36,14 @@ struct Opt {
     log_dir: Option<PathBuf>,
 
     #[structopt(long)]
+    #[cfg(unix)]
     /// Compare arguments using specified size (used for block devices)
     content_size: Option<u64>,
+
+    #[structopt(long)]
+    #[cfg(windows)]
+    /// Compare arguments using specified size (used for block devices) - mandatory on Windows, as only file-to-file comparison is currently supported
+    content_size: u64,
 
     #[structopt(long)]
     #[cfg(unix)]
@@ -59,7 +67,6 @@ fn run() -> failure::Fallible<Comparison> {
 
     #[cfg(feature = "loggest")]
     let mut _flush_log = loggest::init(
-        2,
         log::LevelFilter::max(),
         format!("{}.{}", env!("CARGO_PKG_NAME"), process::id()),
     )
@@ -91,12 +98,14 @@ fn run() -> failure::Fallible<Comparison> {
         HashSet::from_iter(opt.ignored_dirs.into_iter()),
     );
 
+    #[cfg(windows)]
+    return Ok(fscmp.contents(opt.content_size)?);
+
+    #[cfg(unix)]
     Ok(if let Some(content_size) = opt.content_size {
         fscmp.contents(content_size)?
     } else {
-        Comparison::Equal
-        // ()
-        // fscmp.dirs()?
+        fscmp.dirs()?
     })
 }
 

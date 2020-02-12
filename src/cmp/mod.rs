@@ -13,9 +13,12 @@ use nix::sys::stat::Mode;
 use openat::{self, Dir};
 use rayon::prelude::*;
 use std::cmp::{max, min};
+#[cfg(unix)]
 use std::collections::hash_map;
+#[cfg(unix)]
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+#[cfg(unix)]
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
@@ -24,6 +27,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 const BLOCK_SIZE: usize = 512;
@@ -92,6 +96,8 @@ impl EntryInfo {
         let path = path.canonicalize()?;
         #[cfg(unix)]
         let dir = Dir::open(path.parent().unwrap())?;
+        #[cfg(unix)]
+        // In Linux only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
         let path = path.file_name().unwrap().to_os_string().into();
         #[cfg(unix)]
         let metadata = dir.metadata(&path)?;
@@ -100,7 +106,7 @@ impl EntryInfo {
             parent: Arc::new(dir),
             #[cfg(unix)]
             parent_path: Default::default(),
-            path,
+            path: path,
             #[cfg(unix)]
             metadata,
         })
@@ -171,6 +177,7 @@ impl FSCmp {
 
     #[cfg(windows)]
     pub fn new(first: PathBuf, second: PathBuf) -> Self {
+        println!("New Fscmp with {:?}", first);
         Self {
             first,
             second,
@@ -341,14 +348,14 @@ impl FSCmp {
 
         #[cfg(windows)]
         fn open_file(info: &EntryInfo) -> std::io::Result<File> {
-            unsafe { Ok(File::open(&info.path)?) }
+            Ok(File::open(&info.path)?)
         }
 
         if size == 0 {
             return Ok(Comparison::Equal);
         }
 
-        debug!(
+        println!(
             "Comparing contents of \"{}\" and \"{}\" of size {}",
             first.path.display(),
             second.path.display(),
@@ -378,22 +385,28 @@ impl FSCmp {
                     second.path.display()
                 );
 
-                let mut buffer1: Vec<u8> = vec![0; BUF_SIZE];
-                let mut buffer2: Vec<u8> = vec![0; BUF_SIZE];
-                let data1 = &mut buffer1;
-                let data2 = &mut buffer2;
-
-                // let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-                // let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
-                // let data1 = &mut buffer1.0;
-                // let data2 = &mut buffer2.0;
+                let mut buffer1 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                let mut buffer2 = AlignedBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+                let data1 = &mut buffer1.0;
+                let data2 = &mut buffer2.0;
 
                 let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
+                #[cfg(unix)]
+                file1
+                    .read_exact_at(&mut chunked_data1, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                #[cfg(unix)]
+                file2
+                    .read_exact_at(&mut chunked_data2, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+
+                #[cfg(windows)]
                 file1
                     .seek_read(&mut chunked_data1, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                #[cfg(windows)]
                 file2
                     .seek_read(&mut chunked_data2, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
@@ -414,8 +427,6 @@ impl FSCmp {
                         &second,
                     )
                 })
-
-                // Ok(Comparison::Equal)
             })
             .find_any(|r| r.as_ref().ok() != Some(&Comparison::Equal))
             .unwrap_or_else(|| {
@@ -426,8 +437,6 @@ impl FSCmp {
                 );
                 Ok(Comparison::Equal)
             })
-
-        // Ok(Comparison::Equal)
     }
 
     #[cfg(unix)]
@@ -464,6 +473,7 @@ impl FSCmp {
     }
 }
 
+#[cfg(unix)]
 fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
     match entry {
         hash_map::Entry::Vacant(_) => None,
@@ -492,16 +502,18 @@ fn calc_leap(size: u64, limit: u64, chunk_size: u64) -> u64 {
     }
 }
 
-#[cfg(unix)]
 #[cfg(test)]
 mod test {
     use super::*;
     use std::fs;
     use std::io;
     use std::io::prelude::*;
+    #[cfg(unix)]
     use std::os::unix;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile;
+    #[cfg(unix)]
     use walkdir;
 
     #[test]
@@ -521,6 +533,7 @@ mod test {
         assert_eq!(calc_chunk_count(20, 2), 10);
     }
 
+    #[cfg(unix)]
     fn mknod(path: PathBuf, mode: libc::mode_t, dev: libc::dev_t) -> Fallible<()> {
         use std::ffi;
         use std::os::unix::ffi::OsStringExt;
@@ -536,6 +549,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(unix)]
     fn generate_tree() -> Fallible<tempfile::TempDir> {
         let dir = tempfile::tempdir()?;
         for dir in &[dir.path(), &dir.path().join("directory")] {
@@ -550,7 +564,15 @@ mod test {
         Ok(dir)
     }
 
+    #[cfg(windows)]
+    fn generate_tree() -> Fallible<tempfile::TempDir> {
+        let dir = tempfile::tempdir()?;
+        File::create(dir.path().join("regular_file"))?;
+        Ok(dir)
+    }
+
     #[test]
+    #[cfg(unix)]
     fn test_simple() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let fscmp = FSCmp::new(dir1.path().into(), dir1.path().into(), None, HashSet::new());
@@ -575,6 +597,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_permissions() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let dir2 = generate_tree()?;
@@ -614,7 +637,10 @@ mod test {
         let file1_path = dir1.path().join("regular_file");
         let file2_path = dir2.path().join("regular_file");
 
+        #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         assert_eq!(fscmp.contents(0)?, Comparison::Equal);
 
         let mut file1 = fs::OpenOptions::new().write(true).open(&file1_path)?;
@@ -622,12 +648,18 @@ mod test {
 
         file1.set_len(1024 * 1024)?;
         file2.set_len(1024 * 1024)?;
+        #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         assert_eq!(fscmp.contents(1024 * 1024)?, Comparison::Equal);
 
         let offset = file1.seek(io::SeekFrom::Start(532 * 1024 + 13))?;
         file1.write_all(b"a")?;
+        #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         if let Comparison::Unequal {
             diff: Diff::Contents(lba, ..),
             ..
@@ -641,6 +673,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_path_max() -> Fallible<()> {
         let dir = tempfile::tempdir()?;
         let parent = openat::Dir::open(dir.path())?;
@@ -661,6 +694,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_root_mode() -> failure::Fallible<()> {
         let dir1 = tempfile::tempdir()?;
         let dir2 = tempfile::tempdir()?;

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+#[cfg(unix)]
 use std::collections::HashSet;
 use std::fmt;
 use std::path::PathBuf;
@@ -13,6 +15,13 @@ pub enum Comparison {
     },
 }
 
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Diff {
+    Contents(u64, Vec<u8>, Vec<u8>),
+}
+
+#[cfg(unix)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum Diff {
     Modes(u32, u32),
@@ -25,6 +34,91 @@ pub enum Diff {
     DeviceTypes(u64, u64),
     LinkTarget(PathBuf, PathBuf),
     DirContents(HashSet<PathBuf>, HashSet<PathBuf>),
+}
+
+fn format_diff_contents(
+    f: &mut fmt::Formatter,
+    lba: &u64,
+    first_path: Cow<str>,
+    first: &Vec<u8>,
+    second_path: Cow<str>,
+    second: &Vec<u8>,
+) -> fmt::Result {
+    write!(
+        f,
+        "Block {}\nFrom \"{}\":\n{}\nFrom \"{}\":\n{}",
+        lba,
+        first_path,
+        BlockFormat(first),
+        second_path,
+        BlockFormat(second)
+    )
+}
+
+#[cfg(windows)]
+fn format_diff(f: &mut fmt::Formatter, diff: &Diff, first_path: Cow<str>, second_path: Cow<str>) -> fmt::Result {
+    match diff {
+        Diff::Contents(lba, first, second) => format_diff_contents(f, lba, first_path, first, second_path, second),
+    }
+}
+
+#[cfg(unix)]
+fn format_diff(f: &mut fmt::Formatter, diff: &Diff, first_path: Cow<str>, second_path: Cow<str>) -> fmt::Result {
+    match diff {
+        Diff::Modes(first, second) => write!(
+            f,
+            "File mode\nFrom \"{}\": 0o{:o}\nFrom \"{}\": 0o{:o}",
+            first_path, first, second_path, second
+        ),
+        Diff::Nlinks(first, second) => write!(
+            f,
+            "Hard links number\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path, first, second_path, second
+        ),
+        Diff::Uids(first, second) => write!(
+            f,
+            "UID\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path, first, second_path, second
+        ),
+        Diff::Gids(first, second) => write!(
+            f,
+            "GID\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path, first, second_path, second
+        ),
+        Diff::Inodes(first, second) => write!(
+            f,
+            "Inodes\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path,
+            OptionFormat(first),
+            second_path,
+            OptionFormat(second)
+        ),
+        Diff::Sizes(first, second) => write!(
+            f,
+            "Size\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path, first, second_path, second
+        ),
+        Diff::Contents(lba, first, second) => format_diff_contents(f, lba, first_path, first, second_path, second),
+        Diff::DeviceTypes(first, second) => write!(
+            f,
+            "Device type\nFrom \"{}\": {}\nFrom \"{}\": {}",
+            first_path, first, second_path, second
+        ),
+        #[cfg(unix)]
+        Diff::LinkTarget(first, second) => write!(
+            f,
+            "Link target\nFrom \"{}\": \"{}\"\nFrom \"{}\": \"{}\"",
+            first_path,
+            first.display(),
+            second_path,
+            second.display()
+        ),
+        Diff::DirContents(first, second) => write!(
+            f,
+            "Dir contents\nFrom \"{}\": {:#?}\nFrom \"{}\": {:#?}",
+            first_path, first, second_path, second
+        ),
+    }
 }
 
 impl fmt::Display for Comparison {
@@ -44,68 +138,7 @@ impl fmt::Display for Comparison {
                     write!(f, " in \"{}\"", path.to_string_lossy())?;
                 }
                 write!(f, ": ")?;
-                match diff {
-                    Diff::Modes(first, second) => write!(
-                        f,
-                        "File mode\nFrom \"{}\": 0o{:o}\nFrom \"{}\": 0o{:o}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::Nlinks(first, second) => write!(
-                        f,
-                        "Hard links number\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::Uids(first, second) => write!(
-                        f,
-                        "UID\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::Gids(first, second) => write!(
-                        f,
-                        "GID\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::Inodes(first, second) => write!(
-                        f,
-                        "Inodes\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path,
-                        OptionFormat(first),
-                        second_path,
-                        OptionFormat(second)
-                    ),
-                    Diff::Sizes(first, second) => write!(
-                        f,
-                        "Size\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::Contents(lba, first, second) => write!(
-                        f,
-                        "Block {}\nFrom \"{}\":\n{}\nFrom \"{}\":\n{}",
-                        lba,
-                        first_path,
-                        BlockFormat(first),
-                        second_path,
-                        BlockFormat(second)
-                    ),
-                    Diff::DeviceTypes(first, second) => write!(
-                        f,
-                        "Device type\nFrom \"{}\": {}\nFrom \"{}\": {}",
-                        first_path, first, second_path, second
-                    ),
-                    Diff::LinkTarget(first, second) => write!(
-                        f,
-                        "Link target\nFrom \"{}\": \"{}\"\nFrom \"{}\": \"{}\"",
-                        first_path,
-                        first.display(),
-                        second_path,
-                        second.display()
-                    ),
-                    Diff::DirContents(first, second) => write!(
-                        f,
-                        "Dir contents\nFrom \"{}\": {:#?}\nFrom \"{}\": {:#?}",
-                        first_path, first, second_path, second
-                    ),
-                }
+                format_diff(f, diff, first_path, second_path)
             }
         }
     }
