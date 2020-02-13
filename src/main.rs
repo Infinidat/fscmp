@@ -88,7 +88,6 @@ fn run() -> failure::Fallible<Comparison> {
         }
     }
 
-    debug!("Hello World");
     let fscmp = FSCmp::new(
         opt.first,
         opt.second,
