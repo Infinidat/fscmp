@@ -1,7 +1,7 @@
 mod cmp;
 
 use crate::cmp::{Comparison, FSCmp};
-use log::{debug, error};
+use log::error;
 #[cfg(unix)]
 use std::collections::HashSet;
 #[cfg(feature = "simplelog")]
@@ -110,10 +110,7 @@ fn run() -> failure::Fallible<Comparison> {
 
 fn main() {
     match run() {
-        Ok(Comparison::Equal) => {
-            eprintln!("Equal");
-            ()
-        }
+        Ok(Comparison::Equal) => (),
         Ok(comp) => {
             eprintln!("{}", comp);
             std::process::exit(1);

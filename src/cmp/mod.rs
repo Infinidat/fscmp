@@ -106,7 +106,7 @@ impl EntryInfo {
             parent: Arc::new(dir),
             #[cfg(unix)]
             parent_path: Default::default(),
-            path: path,
+            path,
             #[cfg(unix)]
             metadata,
         })
@@ -200,11 +200,7 @@ impl FSCmp {
             first: self.first.clone(),
             second: self.second.clone(),
             path: if first.path == second.path {
-                None
-            // #[cfg(windows)]
-            // Some(first.path)
-            // #[cfg(unix)]
-            // Some(first.parent_path.join(&first.path))
+                Some(first.parent_path.join(&first.path))
             } else {
                 None
             },
@@ -657,7 +653,7 @@ mod test {
         let offset = file1.seek(io::SeekFrom::Start(532 * 1024 + 13))?;
         file1.write_all(b"a")?;
         #[cfg(unix)]
-        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        let fscmp = FSCmp::new(file1_path, file2_path, None, HashSet::new());
         #[cfg(windows)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         if let Comparison::Unequal {

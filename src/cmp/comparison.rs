@@ -38,11 +38,11 @@ pub enum Diff {
 
 fn format_diff_contents(
     f: &mut fmt::Formatter,
-    lba: &u64,
+    lba: u64,
     first_path: Cow<str>,
-    first: &Vec<u8>,
+    first: &[u8],
     second_path: Cow<str>,
-    second: &Vec<u8>,
+    second: &[u8],
 ) -> fmt::Result {
     write!(
         f,
@@ -98,7 +98,9 @@ fn format_diff(f: &mut fmt::Formatter, diff: &Diff, first_path: Cow<str>, second
             "Size\nFrom \"{}\": {}\nFrom \"{}\": {}",
             first_path, first, second_path, second
         ),
-        Diff::Contents(lba, first, second) => format_diff_contents(f, lba, first_path, first, second_path, second),
+        Diff::Contents(lba, first, second) => {
+            format_diff_contents(f, *lba, first_path, first, second_path, second)
+        }
         Diff::DeviceTypes(first, second) => write!(
             f,
             "Device type\nFrom \"{}\": {}\nFrom \"{}\": {}",
