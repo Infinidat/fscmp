@@ -88,29 +88,21 @@ jobs:
       env:
         RUST_MIN_STACK: 8388608
 
-   test-windows:
+  test-windows:
     runs-on: windows-latest
     needs: [format, lint, build-windows]
     strategy:
-        rust: [stable, nightly]
+      rust: [stable, nightly]
     steps:
     - uses: hecrj/setup-rust-action@master
       with:
         rust-version: ${{ matrix.rust }}
-    - name: Install dependencies
-      run: sudo apt install libpcap-dev
-    - name: Install musl
-      if: matrix.target == 'x86_64-unknown-linux-musl'
-      run: sudo apt install musl-tools
-    - name: Add target
-      if: matrix.target == 'x86_64-unknown-linux-musl'
-      run: rustup target add ${{ matrix.target }}
     - uses: actions/checkout@master
     - name: Test debug
-      run: cargo test --all-features --target ${{ matrix.target }}
+      run: cargo test --all-features
       env:
         RUST_MIN_STACK: 8388608
     - name: Test release
-      run: cargo test --all-features --target ${{ matrix.target }}
+      run: cargo test --all-features
       env:
         RUST_MIN_STACK: 8388608
