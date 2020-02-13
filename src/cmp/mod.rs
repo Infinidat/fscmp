@@ -62,21 +62,16 @@ struct EntryInfo {
     metadata: openat::Metadata,
 }
 
-#[cfg(unix)]
 #[derive(Default)]
 pub struct FSCmp {
     first: PathBuf,
     second: PathBuf,
+    #[cfg(unix)]
     full_compare_limit: Option<u64>,
+    #[cfg(unix)]
     ignored_dirs: HashSet<PathBuf>,
+    #[cfg(unix)]
     inode_maps: Mutex<[HashMap<libc::ino_t, PathBuf>; 2]>,
-}
-
-#[cfg(windows)]
-#[derive(Default)]
-pub struct FSCmp {
-    first: PathBuf,
-    second: PathBuf,
 }
 
 impl EntryInfo {
@@ -163,27 +158,19 @@ macro_rules! compare_metadata_field {
 }
 
 impl FSCmp {
-    #[cfg(unix)]
     pub fn new(
         first: PathBuf,
         second: PathBuf,
-        full_compare_limit: Option<u64>,
-        ignored_dirs: HashSet<PathBuf>,
+        #[cfg(unix)] full_compare_limit: Option<u64>,
+        #[cfg(unix)] ignored_dirs: HashSet<PathBuf>,
     ) -> Self {
         Self {
             first,
             second,
+            #[cfg(unix)]
             full_compare_limit,
+            #[cfg(unix)]
             ignored_dirs,
-            ..Default::default()
-        }
-    }
-
-    #[cfg(windows)]
-    pub fn new(first: PathBuf, second: PathBuf) -> Self {
-        Self {
-            first,
-            second,
             ..Default::default()
         }
     }
@@ -370,7 +357,7 @@ impl FSCmp {
             return Ok(Comparison::Equal);
         }
 
-        println!(
+        debug!(
             "Comparing contents of \"{}\" and \"{}\" of size {}",
             first.path.display(),
             second.path.display(),
