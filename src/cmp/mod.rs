@@ -171,7 +171,8 @@ impl FSCmp {
             full_compare_limit,
             #[cfg(unix)]
             ignored_dirs,
-            ..Default::default()
+            #[cfg(unix)]
+            inode_maps: Default::default(),
         }
     }
 
@@ -661,7 +662,7 @@ mod test {
         #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path, file2_path, None, HashSet::new());
         #[cfg(windows)]
-        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
+        let fscmp = FSCmp::new(file1_path, file2_path);
         if let Comparison::Unequal {
             diff: Diff::Contents(lba, ..),
             ..
