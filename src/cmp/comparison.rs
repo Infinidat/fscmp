@@ -58,7 +58,9 @@ fn format_diff_contents(
 #[cfg(windows)]
 fn format_diff(f: &mut fmt::Formatter, diff: &Diff, first_path: Cow<str>, second_path: Cow<str>) -> fmt::Result {
     match diff {
-        Diff::Contents(lba, first, second) => format_diff_contents(f, lba, first_path, first, second_path, second),
+        Diff::Contents(lba, first, second) => {
+            format_diff_contents(f, *lba, first_path, first, second_path, second)
+        }
     }
 }
 

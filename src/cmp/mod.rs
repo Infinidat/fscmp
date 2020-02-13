@@ -18,6 +18,8 @@ use std::collections::hash_map;
 #[cfg(unix)]
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::io;
 #[cfg(unix)]
@@ -26,6 +28,8 @@ use std::os::unix::fs::FileExt;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::sync::{Arc, Mutex};
@@ -97,7 +101,7 @@ impl EntryInfo {
         #[cfg(unix)]
         let dir = Dir::open(path.parent().unwrap())?;
         #[cfg(unix)]
-        // In Linux only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
+        // In UNIX only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
         let path = path.file_name().unwrap().to_os_string().into();
         #[cfg(unix)]
         let metadata = dir.metadata(&path)?;
@@ -177,7 +181,6 @@ impl FSCmp {
 
     #[cfg(windows)]
     pub fn new(first: PathBuf, second: PathBuf) -> Self {
-        println!("New Fscmp with {:?}", first);
         Self {
             first,
             second,
@@ -194,6 +197,7 @@ impl FSCmp {
         self.contents_eq(&EntryInfo::file(&self.first)?, &EntryInfo::file(&self.second)?, size)
     }
 
+    #[cfg(unix)]
     fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
         let comp = Comparison::Unequal {
             diff,
@@ -204,6 +208,18 @@ impl FSCmp {
             } else {
                 None
             },
+        };
+        debug!("{}", comp);
+        comp
+    }
+
+    #[cfg(windows)]
+    fn unequal(&self, diff: Diff, _first: &EntryInfo, _second: &EntryInfo) -> Comparison {
+        let comp = Comparison::Unequal {
+            diff,
+            first: self.first.clone(),
+            second: self.second.clone(),
+            path: Some(self.first.clone()),
         };
         debug!("{}", comp);
         comp
@@ -344,7 +360,10 @@ impl FSCmp {
 
         #[cfg(windows)]
         fn open_file(info: &EntryInfo) -> std::io::Result<File> {
-            Ok(File::open(&info.path)?)
+            Ok(OpenOptions::new()
+                .read(true)
+                .custom_flags(winapi::um::winbase::FILE_FLAG_NO_BUFFERING)
+                .open(&info.path)?)
         }
 
         if size == 0 {
