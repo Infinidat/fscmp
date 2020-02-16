@@ -94,10 +94,11 @@ impl EntryInfo {
         assert!(!path.is_dir());
         let path = path.canonicalize()?;
         #[cfg(unix)]
-        let dir = Dir::open(path.parent().unwrap())?;
-        #[cfg(unix)]
-        // In UNIX only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
-        let path = path.file_name().unwrap().to_os_string().into();
+        let (dir, path) = (
+            Dir::open(path.parent().unwrap())?,
+            // In UNIX only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
+            path.file_name().unwrap().to_os_string().into(),
+        );
         #[cfg(unix)]
         let metadata = dir.metadata(&path)?;
         Ok(EntryInfo {
