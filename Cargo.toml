@@ -3,7 +3,7 @@ name = "fscmp"
 version = "0.2.16"
 authors = ["Dror Levin <spatz@psybear.com>"]
 description = "Utility for comparing files/directories"
-repository = "https://github.com/drrlvn/fscmp"
+repository = "https://github.com/Infinidat/fscmp"
 license = "Apache-2.0"
 edition = "2018"
 
