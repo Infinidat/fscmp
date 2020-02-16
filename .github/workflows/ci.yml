@@ -24,7 +24,7 @@ jobs:
     steps:
     - uses: hecrj/setup-rust-action@master
     - uses: actions/checkout@master
-    - name: Install clippy
+    - name: Install clippy & rustfmt
       run: rustup component add clippy rustfmt
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
