@@ -17,12 +17,14 @@ loggest = { version = "0.2.2", optional = true }
 rayon = "1.2.0"
 simplelog = { version = "0.7.1", optional = true }
 structopt = "0.3.1"
-winapi = "0.3.8"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.16.0"
 openat = "0.1.18"
 libc = "0.2.62"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3.8"
 
 [dev-dependencies]
 tempfile = "3.1.0"
