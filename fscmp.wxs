@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product Name='Fscmp' Id='*' UpgradeCode='04BAB6BF-D6F3-4C39-9540-90EE5254A9E8'
+           Language='1033' Version='0.2.10' Manufacturer='Leonid Genkin'>
+    <Package Id='*' Compressed='yes' InstallScope='perMachine' Platform='x64' InstallerVersion='200' />
+    <Media Id='1' Cabinet='Fscmp.cab' EmbedCab='yes' />
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+          <Directory Id='INSTALLDIR' Name='Fscmp'>
+            <Component Id='Fscmp' Guid='663F3A22-1A11-4DD5-8604-83D73622F0CA' Win64='yes'>
+              <Environment Id="PATH" Name="PATH" Value="[INSTALLDIR]" Permanent="yes" Part="last" Action="set" System="yes" />
+              <File Id='Fscmp' Name='fscmp.exe' DiskId='1' Source='target\release\fscmp.exe'>
+              </File>
+            </Component>
+          </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id='Complete'>
+      <ComponentRef Id='Fscmp' />
+    </Feature>
+  </Product>
+</Wix>

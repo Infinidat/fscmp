@@ -2,20 +2,36 @@ mod comparison;
 
 pub use self::comparison::{Comparison, Diff};
 use failure::{Fallible, ResultExt};
+#[cfg(unix)]
 use libc;
 use log::debug;
+#[cfg(unix)]
 use nix::fcntl;
+#[cfg(unix)]
 use nix::sys::stat::Mode;
+#[cfg(unix)]
 use openat::{self, Dir};
 use rayon::prelude::*;
 use std::cmp::{max, min};
+#[cfg(unix)]
 use std::collections::hash_map;
+#[cfg(unix)]
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+#[cfg(windows)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(unix)]
 use std::os::unix::io::{AsRawFd, FromRawFd};
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 const BLOCK_SIZE: usize = 512;
@@ -37,9 +53,12 @@ impl<T> SliceRange for [T] {
 }
 
 struct EntryInfo {
+    #[cfg(unix)]
     parent: Arc<Dir>,
+    #[cfg(unix)]
     parent_path: PathBuf,
     path: PathBuf,
+    #[cfg(unix)]
     metadata: openat::Metadata,
 }
 
@@ -47,12 +66,16 @@ struct EntryInfo {
 pub struct FSCmp {
     first: PathBuf,
     second: PathBuf,
+    #[cfg(unix)]
     full_compare_limit: Option<u64>,
+    #[cfg(unix)]
     ignored_dirs: HashSet<PathBuf>,
+    #[cfg(unix)]
     inode_maps: Mutex<[HashMap<libc::ino_t, PathBuf>; 2]>,
 }
 
 impl EntryInfo {
+    #[cfg(unix)]
     fn dir(path: &Path) -> Fallible<EntryInfo> {
         assert!(path.is_dir());
         let path = path.canonicalize()?;
@@ -70,17 +93,26 @@ impl EntryInfo {
     fn file(path: &Path) -> Fallible<EntryInfo> {
         assert!(!path.is_dir());
         let path = path.canonicalize()?;
-        let dir = Dir::open(path.parent().unwrap())?;
-        let path = path.file_name().unwrap().to_os_string().into();
+        #[cfg(unix)]
+        let (dir, path) = (
+            Dir::open(path.parent().unwrap())?,
+            // In UNIX only the filename is needed, as openat() is used, unlike Windows - where we open() the file using its full path
+            path.file_name().unwrap().to_os_string().into(),
+        );
+        #[cfg(unix)]
         let metadata = dir.metadata(&path)?;
         Ok(EntryInfo {
+            #[cfg(unix)]
             parent: Arc::new(dir),
+            #[cfg(unix)]
             parent_path: Default::default(),
             path,
+            #[cfg(unix)]
             metadata,
         })
     }
 
+    #[cfg(unix)]
     fn child_entry(&self, name: &Path) -> Fallible<EntryInfo> {
         let path = if self.path.starts_with(".") {
             name.to_path_buf()
@@ -113,6 +145,7 @@ impl EntryInfo {
     }
 }
 
+#[cfg(unix)]
 macro_rules! compare_metadata_field {
     ($self:ident, $first:ident, $second:ident, $field:ident, $err_type:path) => {
         if $first.metadata.stat().$field != $second.metadata.stat().$field {
@@ -129,18 +162,22 @@ impl FSCmp {
     pub fn new(
         first: PathBuf,
         second: PathBuf,
-        full_compare_limit: Option<u64>,
-        ignored_dirs: HashSet<PathBuf>,
+        #[cfg(unix)] full_compare_limit: Option<u64>,
+        #[cfg(unix)] ignored_dirs: HashSet<PathBuf>,
     ) -> Self {
         Self {
             first,
             second,
+            #[cfg(unix)]
             full_compare_limit,
+            #[cfg(unix)]
             ignored_dirs,
-            ..Default::default()
+            #[cfg(unix)]
+            inode_maps: Default::default(),
         }
     }
 
+    #[cfg(unix)]
     pub fn dirs(&self) -> Fallible<Comparison> {
         self.entry_eq(&EntryInfo::dir(&self.first)?, &EntryInfo::dir(&self.second)?)
     }
@@ -149,6 +186,7 @@ impl FSCmp {
         self.contents_eq(&EntryInfo::file(&self.first)?, &EntryInfo::file(&self.second)?, size)
     }
 
+    #[cfg(unix)]
     fn unequal(&self, diff: Diff, first: &EntryInfo, second: &EntryInfo) -> Comparison {
         let comp = Comparison::Unequal {
             diff,
@@ -164,6 +202,19 @@ impl FSCmp {
         comp
     }
 
+    #[cfg(windows)]
+    fn unequal(&self, diff: Diff, _first: &EntryInfo, _second: &EntryInfo) -> Comparison {
+        let comp = Comparison::Unequal {
+            diff,
+            first: self.first.clone(),
+            second: self.second.clone(),
+            path: Some(self.first.clone()),
+        };
+        debug!("{}", comp);
+        comp
+    }
+
+    #[cfg(unix)]
     fn entry_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         debug!(
             "Comparing \"{}\" and \"{}\"",
@@ -220,6 +271,7 @@ impl FSCmp {
         }
     }
 
+    #[cfg(unix)]
     fn entry_filter_map(&self, path_res: io::Result<openat::Entry>) -> Option<io::Result<PathBuf>> {
         match path_res {
             Ok(path) => {
@@ -234,6 +286,7 @@ impl FSCmp {
         }
     }
 
+    #[cfg(unix)]
     fn list_dir(&self, entry: &EntryInfo) -> io::Result<HashSet<PathBuf>> {
         entry
             .parent
@@ -242,6 +295,7 @@ impl FSCmp {
             .collect::<Result<_, _>>()
     }
 
+    #[cfg(unix)]
     fn dir_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         let first_contents: HashSet<_> = self.list_dir(first).context("first")?;
         let second_contents: HashSet<_> = self.list_dir(second).context("second")?;
@@ -269,6 +323,7 @@ impl FSCmp {
             .unwrap_or(Ok(Comparison::Equal))
     }
 
+    #[cfg(unix)]
     fn file_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_size, Diff::Sizes);
 
@@ -277,6 +332,7 @@ impl FSCmp {
     }
 
     fn contents_eq(&self, first: &EntryInfo, second: &EntryInfo, size: u64) -> Fallible<Comparison> {
+        #[cfg(unix)]
         fn open_file(info: &EntryInfo) -> nix::Result<File> {
             unsafe {
                 Ok(File::from_raw_fd(fcntl::openat(
@@ -289,6 +345,14 @@ impl FSCmp {
                     Mode::empty(),
                 )?))
             }
+        }
+
+        #[cfg(windows)]
+        fn open_file(info: &EntryInfo) -> std::io::Result<File> {
+            Ok(OpenOptions::new()
+                .read(true)
+                .custom_flags(winapi::um::winbase::FILE_FLAG_NO_BUFFERING)
+                .open(&info.path)?)
         }
 
         if size == 0 {
@@ -305,9 +369,14 @@ impl FSCmp {
         let file1 = open_file(first)?;
         let file2 = open_file(second)?;
 
+        #[cfg(unix)]
         let limit = self.full_compare_limit.map(|limit| min(limit, size)).unwrap_or(size);
+
+        #[cfg(windows)]
+        let limit = size;
         let leap = calc_leap(size, limit, BUF_SIZE_U64);
 
+        debug!("Comparing {} chunks", calc_chunk_count(limit, BUF_SIZE_U64));
         (0..calc_chunk_count(limit, BUF_SIZE_U64))
             .into_par_iter()
             .map(|i| ((i * leap)..min(size, i * leap + BUF_SIZE_U64)))
@@ -328,11 +397,22 @@ impl FSCmp {
                 let mut chunked_data1 = &mut data1[..(chunk.end - chunk.start) as usize];
                 let mut chunked_data2 = &mut data2[..(chunk.end - chunk.start) as usize];
 
+                #[cfg(unix)]
                 file1
                     .read_exact_at(&mut chunked_data1, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                #[cfg(unix)]
                 file2
                     .read_exact_at(&mut chunked_data2, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
+
+                #[cfg(windows)]
+                file1
+                    .seek_read(&mut chunked_data1, chunk.start)
+                    .with_context(|e| format!("\"{}\": {}", first.path.display().to_string(), e))?;
+                #[cfg(windows)]
+                file2
+                    .seek_read(&mut chunked_data2, chunk.start)
                     .with_context(|e| format!("\"{}\": {}", second.path.display().to_string(), e))?;
 
                 Ok(if chunked_data1 == chunked_data2 {
@@ -363,6 +443,7 @@ impl FSCmp {
             })
     }
 
+    #[cfg(unix)]
     fn symlink_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         let first_target = first.parent.read_link(&first.path)?;
         let second_target = second.parent.read_link(&second.path)?;
@@ -373,25 +454,30 @@ impl FSCmp {
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn block_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         self.char_device_eq(first, second)
     }
 
+    #[cfg(unix)]
     fn char_device_eq(&self, first: &EntryInfo, second: &EntryInfo) -> Fallible<Comparison> {
         compare_metadata_field!(self, first, second, st_rdev, Diff::DeviceTypes);
 
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn fifo_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
 
+    #[cfg(unix)]
     fn socket_eq(&self, _first: &EntryInfo, _second: &EntryInfo) -> Fallible<Comparison> {
         Ok(Comparison::Equal)
     }
 }
 
+#[cfg(unix)]
 fn entry_get<'a, K, V>(entry: &'a hash_map::Entry<K, V>) -> Option<&'a V> {
     match entry {
         hash_map::Entry::Vacant(_) => None,
@@ -426,9 +512,12 @@ mod test {
     use std::fs;
     use std::io;
     use std::io::prelude::*;
+    #[cfg(unix)]
     use std::os::unix;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile;
+    #[cfg(unix)]
     use walkdir;
 
     #[test]
@@ -448,6 +537,7 @@ mod test {
         assert_eq!(calc_chunk_count(20, 2), 10);
     }
 
+    #[cfg(unix)]
     fn mknod(path: PathBuf, mode: libc::mode_t, dev: libc::dev_t) -> Fallible<()> {
         use std::ffi;
         use std::os::unix::ffi::OsStringExt;
@@ -463,6 +553,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(unix)]
     fn generate_tree() -> Fallible<tempfile::TempDir> {
         let dir = tempfile::tempdir()?;
         for dir in &[dir.path(), &dir.path().join("directory")] {
@@ -477,7 +568,15 @@ mod test {
         Ok(dir)
     }
 
+    #[cfg(windows)]
+    fn generate_tree() -> Fallible<tempfile::TempDir> {
+        let dir = tempfile::tempdir()?;
+        File::create(dir.path().join("regular_file"))?;
+        Ok(dir)
+    }
+
     #[test]
+    #[cfg(unix)]
     fn test_simple() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let fscmp = FSCmp::new(dir1.path().into(), dir1.path().into(), None, HashSet::new());
@@ -502,6 +601,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_permissions() -> Fallible<()> {
         let dir1 = generate_tree()?;
         let dir2 = generate_tree()?;
@@ -541,7 +641,10 @@ mod test {
         let file1_path = dir1.path().join("regular_file");
         let file2_path = dir2.path().join("regular_file");
 
+        #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         assert_eq!(fscmp.contents(0)?, Comparison::Equal);
 
         let mut file1 = fs::OpenOptions::new().write(true).open(&file1_path)?;
@@ -549,12 +652,18 @@ mod test {
 
         file1.set_len(1024 * 1024)?;
         file2.set_len(1024 * 1024)?;
+        #[cfg(unix)]
         let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone());
         assert_eq!(fscmp.contents(1024 * 1024)?, Comparison::Equal);
 
         let offset = file1.seek(io::SeekFrom::Start(532 * 1024 + 13))?;
         file1.write_all(b"a")?;
-        let fscmp = FSCmp::new(file1_path.clone(), file2_path.clone(), None, HashSet::new());
+        #[cfg(unix)]
+        let fscmp = FSCmp::new(file1_path, file2_path, None, HashSet::new());
+        #[cfg(windows)]
+        let fscmp = FSCmp::new(file1_path, file2_path);
         if let Comparison::Unequal {
             diff: Diff::Contents(lba, ..),
             ..
@@ -568,6 +677,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_path_max() -> Fallible<()> {
         let dir = tempfile::tempdir()?;
         let parent = openat::Dir::open(dir.path())?;
@@ -588,6 +698,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_root_mode() -> failure::Fallible<()> {
         let dir1 = tempfile::tempdir()?;
         let dir2 = tempfile::tempdir()?;

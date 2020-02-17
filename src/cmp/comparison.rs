@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::collections::HashSet;
 use std::fmt;
 use std::path::PathBuf;
@@ -15,15 +16,24 @@ pub enum Comparison {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Diff {
+    #[cfg(unix)]
     Modes(u32, u32),
+    #[cfg(unix)]
     Nlinks(u64, u64),
+    #[cfg(unix)]
     Uids(u32, u32),
+    #[cfg(unix)]
     Gids(u32, u32),
+    #[cfg(unix)]
     Inodes(Option<PathBuf>, Option<PathBuf>),
+    #[cfg(unix)]
     Sizes(i64, i64),
     Contents(u64, Vec<u8>, Vec<u8>),
+    #[cfg(unix)]
     DeviceTypes(u64, u64),
+    #[cfg(unix)]
     LinkTarget(PathBuf, PathBuf),
+    #[cfg(unix)]
     DirContents(HashSet<PathBuf>, HashSet<PathBuf>),
 }
 
@@ -45,26 +55,31 @@ impl fmt::Display for Comparison {
                 }
                 write!(f, ": ")?;
                 match diff {
+                    #[cfg(unix)]
                     Diff::Modes(first, second) => write!(
                         f,
                         "File mode\nFrom \"{}\": 0o{:o}\nFrom \"{}\": 0o{:o}",
                         first_path, first, second_path, second
                     ),
+                    #[cfg(unix)]
                     Diff::Nlinks(first, second) => write!(
                         f,
                         "Hard links number\nFrom \"{}\": {}\nFrom \"{}\": {}",
                         first_path, first, second_path, second
                     ),
+                    #[cfg(unix)]
                     Diff::Uids(first, second) => write!(
                         f,
                         "UID\nFrom \"{}\": {}\nFrom \"{}\": {}",
                         first_path, first, second_path, second
                     ),
+                    #[cfg(unix)]
                     Diff::Gids(first, second) => write!(
                         f,
                         "GID\nFrom \"{}\": {}\nFrom \"{}\": {}",
                         first_path, first, second_path, second
                     ),
+                    #[cfg(unix)]
                     Diff::Inodes(first, second) => write!(
                         f,
                         "Inodes\nFrom \"{}\": {}\nFrom \"{}\": {}",
@@ -73,6 +88,7 @@ impl fmt::Display for Comparison {
                         second_path,
                         OptionFormat(second)
                     ),
+                    #[cfg(unix)]
                     Diff::Sizes(first, second) => write!(
                         f,
                         "Size\nFrom \"{}\": {}\nFrom \"{}\": {}",
@@ -87,11 +103,13 @@ impl fmt::Display for Comparison {
                         second_path,
                         BlockFormat(second)
                     ),
+                    #[cfg(unix)]
                     Diff::DeviceTypes(first, second) => write!(
                         f,
                         "Device type\nFrom \"{}\": {}\nFrom \"{}\": {}",
                         first_path, first, second_path, second
                     ),
+                    #[cfg(unix)]
                     Diff::LinkTarget(first, second) => write!(
                         f,
                         "Link target\nFrom \"{}\": \"{}\"\nFrom \"{}\": \"{}\"",
@@ -100,6 +118,7 @@ impl fmt::Display for Comparison {
                         second_path,
                         second.display()
                     ),
+                    #[cfg(unix)]
                     Diff::DirContents(first, second) => write!(
                         f,
                         "Dir contents\nFrom \"{}\": {:#?}\nFrom \"{}\": {:#?}",
