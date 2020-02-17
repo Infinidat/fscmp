@@ -12,9 +12,7 @@ jobs:
       - uses: hecrj/setup-rust-action@master
       - uses: actions/checkout@master
       - name: Cargo build
-        run: cargo build --release
-      - name: Cargo test
-        run: cargo test
+        run: cargo build --release --no-default-features --features loggest
       - name: Download WiX
         shell: cmd
         run: curl.exe -LS https://github.com/wixtoolset/wix3/releases/download/wix3111rtm/wix311.exe > wix311.exe
@@ -26,12 +24,10 @@ jobs:
         run: '"%PROGRAMFILES(x86)%\WiX Toolset v3.11\bin\candle.exe" "fscmp.wxs"'
       - name: Link MSI
         shell: cmd
-        run: '"%PROGRAMFILES(x86)%\WiX Toolset v3.11\bin\light.exe" "fscmp.wixobj" "-out" "fscmp.msi"'
+        run: '"%PROGRAMFILES(x86)%\WiX Toolset v3.11\bin\light.exe" "fscmp.wixobj" "-out" "fscmp-%GITHUB_REF%.msi"'
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            fscmp.msi
-            target\release\fscmp.exe
+          files: ${{ format('fscmp-{0}.msi', github.ref) }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

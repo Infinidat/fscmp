@@ -1,0 +1,26 @@
+name: Release Fscmp RPM
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-fscmp-rpm:
+    container:
+      image: registry.gitlab.com/infinidat/docker-rust-rpm
+      env:
+        VERSION: ${{ github.ref }}
+        TARGET: x86_64-unknown-linux-musl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Generate RPM File
+        run: rpmbuild -D "_CARGO_BUILD_ARGS --no-default-features --features loggest" -D "_VERSION $VERSION" -D "_TARGET $TARGET" -D "_topdir $PWD/target/rpmbuild" -D "_sourcedir $PWD" -ba fscmp.spec
+        working-directory: fscmp
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: 'target/rpmbuild/RPMS/x86_64/*.rpm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
