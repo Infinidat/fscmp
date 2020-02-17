@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@master
       - name: Generate RPM File
-        run: rpmbuild -D "_CARGO_BUILD_ARGS --no-default-features --features loggest" -D "_VERSION $VERSION" -D "_TARGET $TARGET" -D "_topdir $PWD/target/rpmbuild" -D "_sourcedir $PWD" -ba fscmp.spec
+        run: rpmbuild -D "_CARGO_BUILD_ARGS --no-default-features --features loggest" -D "_VERSION ${VERSION#refs/tags/}" -D "_TARGET $TARGET" -D "_topdir $PWD/target/rpmbuild" -D "_sourcedir $PWD" -ba fscmp.spec
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
