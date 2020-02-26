@@ -92,7 +92,15 @@ impl EntryInfo {
 
     fn file(path: &Path) -> Fallible<EntryInfo> {
         assert!(!path.is_dir());
+
+        #[cfg(unix)]
         let path = path.canonicalize()?;
+        #[cfg(windows)]
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            // Windows device access paths can't be canonicalized
+            _ => path.to_path_buf(),
+        };
         #[cfg(unix)]
         let (dir, path) = (
             Dir::open(path.parent().unwrap())?,
