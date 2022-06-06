@@ -19,7 +19,7 @@ simplelog = { version = "0.7.1", optional = true }
 structopt = "0.3.1"
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.16.0"
+nix = "0.20.2"
 openat = "0.1.18"
 libc = "0.2.62"
 
